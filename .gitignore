@@ -83,3 +83,7 @@ htmlcov/
 .mypy_cache/
 .dmypy.json
 dmypy.json
+
+# Archives
+*.tar.gz
+*.zip

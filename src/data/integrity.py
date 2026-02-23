@@ -198,15 +198,17 @@ class IntegrityManager:
             # Single day drift - WARN only
             logger.warn("single_day_drift", drift_events[0], drift_events[0]['symbol'])
         else:
-            # Check for consecutive days per symbol
+            # FIXED A25: Check for consecutive TRADING days per symbol (not calendar days)
             max_consecutive = 0
             for symbol, dates in symbol_day_drifts.items():
-                sorted_dates = sorted(dates)
+                sorted_dates = sorted([pd.Timestamp(d) for d in dates])
                 consecutive = 1
                 for i in range(1, len(sorted_dates)):
-                    d1 = pd.Timestamp(sorted_dates[i-1])
-                    d2 = pd.Timestamp(sorted_dates[i])
-                    if (d2 - d1).days <= 3:  # Within 3 trading days
+                    d1 = sorted_dates[i-1]
+                    d2 = sorted_dates[i]
+                    # Use np.busday_count for trading day calculation
+                    trading_days = np.busday_count(d1.strftime('%Y-%m-%d'), d2.strftime('%Y-%m-%d'))
+                    if trading_days <= 1:  # Within 1 trading day (consecutive)
                         consecutive += 1
                     else:
                         max_consecutive = max(max_consecutive, consecutive)

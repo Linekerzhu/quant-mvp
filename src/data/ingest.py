@@ -138,9 +138,12 @@ class YFinanceSource(DataSource):
                 
                 merged['symbol'] = symbol
                 
+                # A24: Add ingestion timestamp for PIT tracking
+                merged['ingestion_timestamp'] = pd.Timestamp.now()
+                
                 all_data.append(merged[['symbol', 'date', 'raw_open', 'raw_high', 'raw_low', 
                                       'raw_close', 'adj_open', 'adj_high', 'adj_low', 
-                                      'adj_close', 'volume']])
+                                      'adj_close', 'volume', 'ingestion_timestamp']])
                 
                 logger.info("data_fetch_success", {
                     "symbol": symbol, 
@@ -270,10 +273,13 @@ class TiingoSource(DataSource):
                 
                 df['symbol'] = symbol
                 
+                # A24: Add ingestion timestamp for PIT tracking
+                df['ingestion_timestamp'] = pd.Timestamp.now()
+                
                 # Select columns to match yfinance format
                 df = df[['symbol', 'date', 'raw_open', 'raw_high', 'raw_low', 
                         'raw_close', 'adj_open', 'adj_high', 'adj_low', 
-                        'adj_close', 'volume']]
+                        'adj_close', 'volume', 'ingestion_timestamp']]
                 
                 all_data.append(df)
                 

@@ -7,6 +7,7 @@ Concurrent events get lower weights.
 
 import numpy as np
 import pandas as pd
+from pandas.tseries.offsets import BusinessDay
 from typing import Dict, List
 
 from src.ops.event_logger import get_logger
@@ -79,12 +80,14 @@ class SampleWeightCalculator:
         """
         Count number of concurrent events during lifetime.
         
+        Uses BusinessDay for accurate trading day calculation.
+        
         Events are concurrent if:
         - Same symbol is not allowed (per event protocol)
         - Different symbols can overlap
         """
-        # Exit date
-        entry_idx = valid_df[valid_df['date'] == entry_date].index[0]
+        # Calculate exit date using BusinessDay (trading days, not calendar days)
+        current_exit = entry_date + BusinessDay(holding_days)
         
         # Find events that overlap in time
         overlapping = 0
@@ -98,11 +101,10 @@ class SampleWeightCalculator:
             if row['symbol'] == current_symbol:
                 continue
             
-            # Check temporal overlap
+            # Check temporal overlap using BusinessDay
             other_entry = row['date']
-            other_exit = other_entry + pd.Timedelta(days=int(row['label_holding_days']))
-            
-            current_exit = entry_date + pd.Timedelta(days=holding_days)
+            other_holding = int(row['label_holding_days'])
+            other_exit = other_entry + BusinessDay(other_holding)
             
             # Overlap if: other_entry < current_exit AND other_exit > entry_date
             if other_entry < current_exit and other_exit > entry_date:

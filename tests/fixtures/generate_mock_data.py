@@ -77,7 +77,8 @@ def generate_mock_prices(
     df = pd.DataFrame(records)
     
     # Inject scenarios
-    df = _inject_split_scenario(df, symbol='MOCK000', split_date='2024-06-15', ratio=2.0)
+    # Note: 2024-06-15 is Saturday, use 2024-06-17 (Monday) instead
+    df = _inject_split_scenario(df, symbol='MOCK000', split_date='2024-06-17', ratio=2.0)
     df = _inject_halt_scenario(df, symbol='MOCK001', halt_start='2024-03-15', n_days=5)
     df = _inject_jump_scenario(df, symbol='MOCK002', jump_date='2024-04-20', jump_pct=0.55)
     df = _inject_delist_scenario(df, symbol='MOCK003', delist_date='2024-08-15')
@@ -91,22 +92,53 @@ def _inject_split_scenario(
     split_date: str,
     ratio: float = 2.0
 ) -> pd.DataFrame:
-    """Inject a 2:1 stock split scenario."""
-    mask = df['symbol'] == symbol
-    split_idx = df[mask & (df['date'] == split_date)].index
+    """Inject a 2:1 stock split scenario.
     
-    if len(split_idx) == 0:
+    For backward-adjusted prices:
+    - Pre-split: raw = base * ratio (higher historical raw), adj = base
+    - Post-split: raw = base, adj = base
+    
+    This creates the divergence where pre-split raw/adj ~ ratio,
+    and post-split raw/adj ~ 1.0
+    """
+    mask = df['symbol'] == symbol
+    split_date_ts = pd.Timestamp(split_date)
+    
+    # Find the split date in the data
+    split_mask = mask & (df['date'] == split_date_ts)
+    
+    if split_mask.sum() == 0:
+        print(f"Warning: Split date {split_date} not found for {symbol}")
         return df
     
-    split_idx = split_idx[0]
-    pre_split_mask = mask & (df.index < split_idx)
+    # Get split index
+    split_idx = df[split_mask].index[0]
     
-    # Adjust pre-split prices (backward adjustment)
-    df.loc[pre_split_mask, 'adj_open'] /= ratio
-    df.loc[pre_split_mask, 'adj_high'] /= ratio
-    df.loc[pre_split_mask, 'adj_low'] /= ratio
-    df.loc[pre_split_mask, 'adj_close'] /= ratio
-    df.loc[pre_split_mask, 'volume'] *= ratio
+    # Pre-split mask
+    pre_split_mask = mask & (df['date'] < split_date_ts)
+    
+    # Save the base prices (these are the post-split/adjusted prices)
+    base_open = df.loc[pre_split_mask, 'raw_open'].copy()
+    base_high = df.loc[pre_split_mask, 'raw_high'].copy()
+    base_low = df.loc[pre_split_mask, 'raw_low'].copy()
+    base_close = df.loc[pre_split_mask, 'raw_close'].copy()
+    base_volume = df.loc[pre_split_mask, 'volume'].copy()
+    
+    # Pre-split raw prices are higher (before the split)
+    df.loc[pre_split_mask, 'raw_open'] = base_open * ratio
+    df.loc[pre_split_mask, 'raw_high'] = base_high * ratio
+    df.loc[pre_split_mask, 'raw_low'] = base_low * ratio
+    df.loc[pre_split_mask, 'raw_close'] = base_close * ratio
+    
+    # Pre-split adj prices are the base (backward-adjusted)
+    # These represent what the price would be if adjusted for the split
+    df.loc[pre_split_mask, 'adj_open'] = base_open
+    df.loc[pre_split_mask, 'adj_high'] = base_high
+    df.loc[pre_split_mask, 'adj_low'] = base_low
+    df.loc[pre_split_mask, 'adj_close'] = base_close
+    
+    # Pre-split volume is higher (more shares before split)
+    df.loc[pre_split_mask, 'volume'] = base_volume * ratio
     
     return df
 
@@ -188,7 +220,7 @@ def generate_mock_corporate_actions() -> pd.DataFrame:
         {
             'symbol': 'MOCK000',
             'event_type': 'split',
-            'event_date': '2024-06-15',
+            'event_date': '2024-06-17',  # Monday (15th is Saturday)
             'ratio': 2.0,
             'details': '2:1 stock split'
         },

@@ -62,7 +62,11 @@ class YFinanceSource(DataSource):
         start: str,
         end: str
     ) -> Optional[pd.DataFrame]:
-        """Fetch data from yfinance with rate limiting."""
+        """
+        Fetch data from yfinance with rate limiting.
+        
+        Fetches both adjusted and raw prices for proper corporate action detection.
+        """
         all_data = []
         
         for symbol in symbols:
@@ -71,35 +75,64 @@ class YFinanceSource(DataSource):
                 time.sleep(0.5)
                 
                 ticker = yf.Ticker(symbol, session=self.session)
-                hist = ticker.history(start=start, end=end, auto_adjust=True)
                 
-                if hist.empty:
-                    logger.warn("data_fetch_empty", {"symbol": symbol, "source": "yfinance"})
+                # Fetch adjusted prices (backward-adjusted for splits/dividends)
+                adj_hist = ticker.history(start=start, end=end, auto_adjust=True)
+                
+                if adj_hist.empty:
+                    logger.warn("data_fetch_empty", {"symbol": symbol, "source": "yfinance", "type": "adj"})
                     continue
                 
-                # Standardize columns
-                hist = hist.reset_index()
-                hist['symbol'] = symbol
-                hist.rename(columns={
+                time.sleep(0.5)  # Rate limiting between calls
+                
+                # Fetch raw prices (actual trade prices)
+                raw_hist = ticker.history(start=start, end=end, auto_adjust=False)
+                
+                if raw_hist.empty:
+                    logger.warn("data_fetch_empty", {"symbol": symbol, "source": "yfinance", "type": "raw"})
+                    continue
+                
+                # Merge adjusted and raw data
+                adj_hist = adj_hist.reset_index()
+                raw_hist = raw_hist.reset_index()
+                
+                # Standardize column names
+                adj_hist = adj_hist.rename(columns={
                     'Open': 'adj_open',
                     'High': 'adj_high',
                     'Low': 'adj_low',
                     'Close': 'adj_close',
                     'Volume': 'volume',
                     'Date': 'date'
-                }, inplace=True)
+                })
                 
-                # yfinance auto_adjust gives adj prices, we need raw too
-                # For MVP: we'll use adj as both (simplified)
-                # In production: fetch twice (auto_adjust=False for raw)
-                hist['raw_open'] = hist['adj_open']
-                hist['raw_high'] = hist['adj_high']
-                hist['raw_low'] = hist['adj_low']
-                hist['raw_close'] = hist['adj_close']
+                raw_hist = raw_hist.rename(columns={
+                    'Open': 'raw_open',
+                    'High': 'raw_high',
+                    'Low': 'raw_low',
+                    'Close': 'raw_close',
+                    'Date': 'date'
+                })
                 
-                all_data.append(hist[['symbol', 'date', 'raw_open', 'raw_high', 'raw_low', 
+                # Merge on date
+                merged = pd.merge(
+                    adj_hist[['date', 'adj_open', 'adj_high', 'adj_low', 'adj_close', 'volume']],
+                    raw_hist[['date', 'raw_open', 'raw_high', 'raw_low', 'raw_close']],
+                    on='date',
+                    how='inner'
+                )
+                
+                merged['symbol'] = symbol
+                
+                all_data.append(merged[['symbol', 'date', 'raw_open', 'raw_high', 'raw_low', 
                                       'raw_close', 'adj_open', 'adj_high', 'adj_low', 
                                       'adj_close', 'volume']])
+                
+                logger.info("data_fetch_success", {
+                    "symbol": symbol, 
+                    "rows": len(merged),
+                    "date_range": f"{merged['date'].min()} to {merged['date'].max()}"
+                }, symbol)
                 
             except Exception as e:
                 logger.error("data_fetch_error", {"symbol": symbol, "error": str(e), "source": "yfinance"})

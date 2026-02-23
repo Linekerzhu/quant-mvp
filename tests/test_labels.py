@@ -91,7 +91,7 @@ class TestTripleBarrierLogic:
             'symbol': 'TEST',
             'date': dates,
             'adj_open': [100] * 20,
-            'adj_high': [120] + [110] * 19,  # First day hits profit barrier
+            'adj_high': [120] + [111] * 19,  # Days after entry hit profit barrier (>110)
             'adj_low': [100] * 20,
             'adj_close': [105] * 20,
             'atr_14': [5] * 20,

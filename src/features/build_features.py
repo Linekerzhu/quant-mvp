@@ -311,10 +311,13 @@ class FeatureEngineer:
                 )
             )
         
-        # ATR using groupby (fixed: group_keys=False + .values)
-        df['atr_14'] = df.groupby('symbol', group_keys=False).apply(
-            lambda g: self._calc_atr(g.reset_index(drop=True), window=14)
-        ).values
+        # ATR per symbol (explicit loop — groupby.apply unreliable across pandas versions)
+        atr_parts = []
+        for symbol, group in df.groupby('symbol'):
+            atr = self._calc_atr(group.reset_index(drop=True), window=14)
+            atr.index = group.index
+            atr_parts.append(atr)
+        df['atr_14'] = pd.concat(atr_parts)
         
         return df
     
@@ -325,10 +328,13 @@ class FeatureEngineer:
             lambda x: x / x.rolling(window=20, min_periods=1).mean()
         )
         
-        # OBV using groupby (fixed: group_keys=False + .values)
-        df['obv'] = df.groupby('symbol', group_keys=False).apply(
-            lambda g: self._calc_obv(g.reset_index(drop=True))
-        ).values
+        # OBV per symbol (explicit loop — groupby.apply unreliable across pandas versions)
+        obv_parts = []
+        for symbol, group in df.groupby('symbol'):
+            obv = self._calc_obv(group.reset_index(drop=True))
+            obv.index = group.index
+            obv_parts.append(obv)
+        df['obv'] = pd.concat(obv_parts)
         
         return df
     
@@ -425,12 +431,14 @@ class FeatureEngineer:
         df['pv_divergence_bear'] = ((df['price_trend_5d'] < 0) & 
                                      (df['volume_trend_5d'] < 0)).astype(int)
         
-        # Continuous divergence score: correlation between price and volume trends (fixed)
-        df['pv_correlation_5d'] = df.groupby('symbol', group_keys=False).apply(
-            lambda g: g['price_trend_5d'].rolling(5, min_periods=3).corr(
-                g['volume_trend_5d']
+        # Continuous divergence score (explicit loop — groupby.apply unreliable)
+        corr_parts = []
+        for symbol, group in df.groupby('symbol'):
+            corr = group['price_trend_5d'].rolling(5, min_periods=3).corr(
+                group['volume_trend_5d']
             )
-        ).values
+            corr_parts.append(corr)
+        df['pv_correlation_5d'] = pd.concat(corr_parts)
         
         # Clean up temp columns
         df = df.drop(columns=['price_trend_5d', 'volume_trend_5d'])

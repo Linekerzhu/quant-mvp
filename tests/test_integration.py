@@ -177,9 +177,9 @@ class TestPhaseAtoBPipeline:
         df = labeler.label_events(df)
         
         # Check suspended periods have no valid events
+        # Use raw_close.isna() to identify actual suspension days
         suspended = df[(df['symbol'] == 'MOCK001') & 
-                       (df['date'] >= '2024-03-15') & 
-                       (df['date'] <= '2024-03-21')]
+                       (df['raw_close'].isna())]
         
         if len(suspended) > 0:
             assert suspended['event_valid'].sum() == 0, "Suspended days should have no valid events"

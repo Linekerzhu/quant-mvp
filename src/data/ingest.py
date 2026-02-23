@@ -56,7 +56,7 @@ class YFinanceSource(DataSource):
             total=5,
             backoff_factor=1,  # 1, 2, 4, 8, 16 seconds
             status_forcelist=[429, 500, 502, 503, 504],
-            max_backoff=60  # Max 60 seconds
+            backoff_max=60  # Max 60 seconds (urllib3 2.x param name)
         )
         adapter = HTTPAdapter(max_retries=retry)
         session.mount('http://', adapter)

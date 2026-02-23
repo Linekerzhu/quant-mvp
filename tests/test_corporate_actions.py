@@ -53,7 +53,8 @@ class TestCorporateActions:
     
     def test_suspension_detection(self, handler, mock_prices):
         """Test suspension detection on MOCK001."""
-        result = handler.detect_suspensions(mock_prices)
+        # Use min_consecutive=3 to match MOCK001's 3-day NaN pattern
+        result = handler.detect_suspensions(mock_prices, min_consecutive=3)
         
         # MOCK001 should have suspension marked
         mock001 = result[result['symbol'] == 'MOCK001']
@@ -61,7 +62,7 @@ class TestCorporateActions:
     
     def test_suspension_can_trade_flag(self, handler, mock_prices):
         """Test that suspended symbols are marked as non-tradable."""
-        result = handler.detect_suspensions(mock_prices)
+        result = handler.detect_suspensions(mock_prices, min_consecutive=3)
         
         mock001 = result[result['symbol'] == 'MOCK001']
         suspended = mock001[mock001['is_suspended']]

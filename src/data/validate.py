@@ -136,13 +136,18 @@ class DataValidator:
                 group_start = symbol_indices[group_in_symbol][0]
                 preceding = df.loc[(df.index < group_start) & mask]
                 
-                for col in price_cols:  # BUG 1 FIX: Restore column loop
+                filled_any = False
+                for col in price_cols:
                     if col not in df.columns:
                         continue
                     valid_preceding = preceding[col].dropna()
                     if len(valid_preceding) > 0:
                         df.loc[group_global_mask, col] = valid_preceding.iloc[-1]
-                        filled_count += group_global_mask.sum()
+                        filled_any = True
+                
+                # Count only once per row (not once per column)
+                if filled_any:
+                    filled_count += group_global_mask.sum()
         
         report["checks"]["missing_values"]["filled"] = int(filled_count)
         report["checks"]["missing_values"]["suspension_marked"] = int(suspension_marked)

@@ -2,6 +2,7 @@
 Daily Job - Main Pipeline Orchestration
 
 Coordinates the daily data pipeline with idempotency guarantees.
+All parquet writes use Write-Audit-Publish (WAP) pattern for data integrity.
 """
 
 import os
@@ -15,6 +16,7 @@ from src.data.validate import DataValidator
 from src.data.integrity import IntegrityManager
 from src.data.corporate_actions import CorporateActionsHandler
 from src.data.universe import UniverseManager
+from src.data.wap_utils import write_parquet_wap, read_parquet_safe
 from src.ops.event_logger import get_logger
 
 logger = get_logger()
@@ -99,29 +101,25 @@ class DailyJob:
             end=end.strftime('%Y-%m-%d')
         )
         
-        # Save to raw
-        data.to_parquet(f"data/raw/daily_{trade_date}.parquet", index=False)
+        # Save to raw using WAP (FIXED A23)
+        write_parquet_wap(data, f"data/raw/daily_{trade_date}.parquet")
         
         return {"rows": len(data), "symbols": data['symbol'].nunique()}
     
     def _step_validate(self, trade_date: str):
         """Step 2: Data validation."""
-        import pandas as pd
-        
-        data = pd.read_parquet(f"data/raw/daily_{trade_date}.parquet")
+        data = read_parquet_safe(f"data/raw/daily_{trade_date}.parquet")
         
         passed, cleaned, report = self.validator.validate(data)
         
-        # Save validated data
-        cleaned.to_parquet(f"data/processed/validated_{trade_date}.parquet", index=False)
+        # Save validated data using WAP (FIXED A23)
+        write_parquet_wap(cleaned, f"data/processed/validated_{trade_date}.parquet")
         
         return {"passed": passed, "pass_rate": report.get('pass_rate', 0)}
     
     def _step_integrity(self, trade_date: str):
         """Step 3: Integrity check and hash freezing."""
-        import pandas as pd
-        
-        data = pd.read_parquet(f"data/processed/validated_{trade_date}.parquet")
+        data = read_parquet_safe(f"data/processed/validated_{trade_date}.parquet")
         
         # Check for drift
         universe_size = data['symbol'].nunique()
@@ -133,36 +131,40 @@ class DailyJob:
         # Freeze hashes
         self.integrity.freeze_data(data)
         
-        # Create snapshot
+        # Create snapshot (already uses WAP in IntegrityManager)
         snapshot = self.integrity.create_snapshot(data, f"{trade_date}_v1")
         
         return {"snapshot": str(snapshot), "drifts": len(drifts)}
     
     def _step_corp_actions(self, trade_date: str):
         """Step 4: Corporate actions processing."""
-        import pandas as pd
-        
-        data = pd.read_parquet(f"data/processed/validated_{trade_date}.parquet")
+        data = read_parquet_safe(f"data/processed/validated_{trade_date}.parquet")
         
         processed, info = self.corp_actions.apply_all(data)
         
-        # Save processed data
-        processed.to_parquet(f"data/processed/corp_actions_{trade_date}.parquet", index=False)
+        # Save processed data using WAP (FIXED A23)
+        write_parquet_wap(processed, f"data/processed/corp_actions_{trade_date}.parquet")
         
         return info
     
     def _step_universe(self, trade_date: str):
         """Step 5: Universe management."""
-        import pandas as pd
-        
-        data = pd.read_parquet(f"data/processed/corp_actions_{trade_date}.parquet")
+        data = read_parquet_safe(f"data/processed/corp_actions_{trade_date}.parquet")
         
         universe_info = self.universe.build_universe(data)
         
-        # Save universe info
+        # Save universe info (JSON doesn't need WAP, but use atomic write)
         import json
-        with open(f"data/processed/universe_{trade_date}.json", 'w') as f:
+        universe_path = f"data/processed/universe_{trade_date}.json"
+        temp_path = universe_path + '.tmp'
+        
+        with open(temp_path, 'w') as f:
             json.dump(universe_info, f, indent=2, default=str)
+        
+        # Atomic rename
+        if os.path.exists(universe_path):
+            os.remove(universe_path)
+        os.rename(temp_path, universe_path)
         
         return universe_info['metadata']
 

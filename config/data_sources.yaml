@@ -1,0 +1,79 @@
+# Data Sources Configuration
+# Defines primary and backup data sources with failover parameters
+
+sources:
+  primary:
+    name: yfinance
+    type: yahoo_finance
+    enabled: true
+    rate_limit:
+      requests_per_second: 2  # Max 2 requests per second
+      min_interval_seconds: 0.5  # Minimum 0.5s between requests
+    retry:
+      max_attempts: 5
+      backoff_factor: 1.0  # Exponential: 1, 2, 4, 8, 16 seconds
+      max_backoff_seconds: 60
+      retry_on_status: [429, 500, 502, 503, 504]
+    timeout:
+      connect_seconds: 10
+      read_seconds: 30
+    
+  backup:
+    name: tiingo
+    type: tiingo_api
+    enabled: true
+    api_key_env: TIINGO_API_KEY
+    rate_limit:
+      requests_per_second: 10
+      min_interval_seconds: 0.1
+    retry:
+      max_attempts: 3
+      backoff_factor: 2.0
+      max_backoff_seconds: 30
+      retry_on_status: [429, 500, 502, 503, 504]
+    timeout:
+      connect_seconds: 10
+      read_seconds: 30
+    # Tiingo backup limitations
+    limitations:
+      provides_adj_ohlc: false  # Does NOT provide adjusted OHLC
+      provides_raw_ohlc: true
+      
+  fallback:
+    name: alpha_vantage
+    type: alpha_vantage_api
+    enabled: false  # Disabled by default (lower rate limits)
+    api_key_env: ALPHA_VANTAGE_API_KEY
+    rate_limit:
+      requests_per_second: 5
+      min_interval_seconds: 0.2
+    retry:
+      max_attempts: 3
+      backoff_factor: 1.0
+      max_backoff_seconds: 30
+
+# Failover Configuration
+failover:
+  enabled: true
+  # Switch to backup after primary fails for this many consecutive symbols
+  failover_threshold: 3
+  # Cooldown period before trying primary again (seconds)
+  primary_cooldown_seconds: 300
+  # Feature degradation when using backup (no AdjOHLC)
+  feature_degradation:
+    log_to_events: true
+    disable_ohlc_features: true  # Disable features requiring AdjOHLC
+    log_level: warning
+
+# Cache Configuration
+cache:
+  enabled: true
+  backend: sqlite
+  path: data/cache/requests_cache.sqlite
+  # Cache TTL for different data types
+  ttl:
+    historical_prices: 86400  # 24 hours
+    intraday_prices: 3600     # 1 hour
+    corporate_actions: 43200  # 12 hours
+  # Only cache GET requests
+  allowable_methods: [GET]

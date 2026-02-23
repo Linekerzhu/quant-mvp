@@ -53,13 +53,13 @@ class DataValidator:
         nan_count = nan_mask.sum()
         report["checks"]["missing_values"] = {"count": int(nan_count)}
         
-        # Handle consecutive NaN (halt detection)
-        df = self._handle_missing_values(df, report)
+        # Handle consecutive NaN (halt detection) - FIXED A26
+        df = self._handle_missing_values_fixed(df, report)
         
         # Check 3: Abnormal jumps (after split adjustment awareness)
         df = self._detect_anomalies(df, report)
         
-        # Check 4: Suspension detection (5+ days of NaN after handling)
+        # Check 4: Suspension detection (max_consecutive_nan+ days of NaN after handling)
         df = self._detect_suspension(df, report)
         
         # Calculate pass rate
@@ -73,34 +73,69 @@ class DataValidator:
         
         return passed, df, report
     
-    def _handle_missing_values(
+    def _handle_missing_values_fixed(
         self,
         df: pd.DataFrame,
         report: dict
     ) -> pd.DataFrame:
-        """Handle missing values with forward fill for single days."""
-        df = df.sort_values(['symbol', 'date'])
+        """
+        Handle missing values with proper consecutive NaN detection.
         
-        # Count consecutive NaN per symbol
+        FIXED A26: Correctly identifies consecutive NaN runs.
+        - Single day NaN: Forward fill
+        - 2-3 consecutive NaN: Forward fill (within limit)
+        - >= max_consecutive_nan consecutive NaN: Mark as suspension (don't fill)
+        """
+        df = df.sort_values(['symbol', 'date']).copy()
+        
+        price_cols = ['raw_open', 'raw_high', 'raw_low', 'raw_close',
+                     'adj_open', 'adj_high', 'adj_low', 'adj_close']
+        
+        filled_count = 0
+        suspension_marked = 0
+        
         for symbol in df['symbol'].unique():
             mask = df['symbol'] == symbol
-            symbol_df = df.loc[mask]
             
-            # Find gaps
-            nan_mask = symbol_df['raw_close'].isna()
+            # Get close price for this symbol
+            close_series = df.loc[mask, 'raw_close'].copy()
             
-            if nan_mask.sum() == 0:
+            if close_series.isna().sum() == 0:
                 continue
             
-            # Forward fill single days
-            df.loc[mask, 'nan_group'] = nan_mask.astype(int).cumsum()
+            # Find NaN positions
+            nan_mask = close_series.isna()
             
-            for col in ['raw_open', 'raw_high', 'raw_low', 'raw_close',
-                       'adj_open', 'adj_high', 'adj_low', 'adj_close']:
-                df.loc[mask, col] = df.loc[mask].groupby('nan_group')[col].ffill(limit=1)
+            # FIXED: Properly identify consecutive NaN runs
+            # Create group IDs for consecutive NaN segments
+            nan_groups = (nan_mask != nan_mask.shift()).cumsum()
+            
+            # For each NaN group, check its length
+            for group_id in nan_groups[nan_mask].unique():
+                group_mask = nan_groups == group_id
+                group_length = group_mask.sum()
+                
+                if group_length < self.max_consecutive_nan:
+                    # Within limit: forward fill this group
+                    for col in price_cols:
+                        if col in df.columns:
+                            col_values = df.loc[mask, col].copy()
+                            # Forward fill only this specific group
+                            last_valid = col_values[~group_mask].iloc[-1] if (~group_mask).any() else None
+                            if last_valid is not None:
+                                df.loc[mask & group_mask, col] = last_valid
+                                filled_count += group_mask.sum()
+                else:
+                    # Exceeds limit: mark as suspension (don't fill)
+                    suspension_marked += group_mask.sum()
+                    logger.warn("consecutive_nan_exceeds_limit", {
+                        "symbol": symbol,
+                        "consecutive_days": int(group_length),
+                        "limit": self.max_consecutive_nan
+                    })
         
-        if 'nan_group' in df.columns:
-            df = df.drop(columns=['nan_group'])
+        report["checks"]["missing_values"]["filled"] = int(filled_count)
+        report["checks"]["missing_values"]["suspension_marked"] = int(suspension_marked)
         
         return df
     
@@ -146,7 +181,7 @@ class DataValidator:
         df: pd.DataFrame,
         report: dict
     ) -> pd.DataFrame:
-        """Detect trading suspensions (5+ consecutive NaN)."""
+        """Detect trading suspensions (max_consecutive_nan+ consecutive NaN)."""
         suspensions = []
         
         for symbol in df['symbol'].unique():
@@ -156,7 +191,7 @@ class DataValidator:
             # Check for remaining NaN after forward fill
             nan_mask = symbol_df['raw_close'].isna()
             
-            if nan_mask.sum() < 5:
+            if nan_mask.sum() < self.max_consecutive_nan:
                 continue
             
             # Mark as suspended (don't drop, just flag)
@@ -164,6 +199,9 @@ class DataValidator:
                 "symbol": symbol,
                 "suspended_days": int(nan_mask.sum())
             })
+            
+            # Set can_trade flag
+            df.loc[mask & df['date'].isin(symbol_df.loc[nan_mask, 'date']), 'can_trade'] = False
             
             # Log suspension
             logger.warn("suspension_detected", {

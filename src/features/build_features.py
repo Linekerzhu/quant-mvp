@@ -72,8 +72,24 @@ class FeatureEngineer:
         df = self._inject_dummy_noise(df)
         
         # Handle NaN values in features
+        # Plan requirement: Mark rows with NaN features as invalid instead of filling with 0
         feature_cols = self._get_feature_columns(df)
-        df[feature_cols] = df[feature_cols].fillna(0)
+        
+        # Create mask for rows with any NaN in features
+        nan_mask = df[feature_cols].isna().any(axis=1)
+        df['features_valid'] = ~nan_mask
+        
+        # Log NaN statistics
+        nan_count = nan_mask.sum()
+        if nan_count > 0:
+            logger.warn("features_with_nan_detected", {
+                "nan_rows": int(nan_count),
+                "total_rows": len(df),
+                "nan_pct": round(100 * nan_count / len(df), 2)
+            })
+        
+        # Keep NaN as NaN (don't fill with 0) - downstream will skip invalid rows
+        # df[feature_cols] = df[feature_cols].fillna(0)  # REMOVED per Plan v4
         
         # Add feature version
         df['feature_version'] = self.version

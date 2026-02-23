@@ -112,8 +112,9 @@ class IntegrityManager:
             subset=['symbol', 'date'], keep='last'
         )
         
-        # Save
-        self.hashes.to_parquet(self.hash_file, index=False)
+        # Save using WAP (O1 fix)
+        from src.data.wap_utils import write_parquet_wap
+        write_parquet_wap(self.hashes, self.hash_file)
         
         logger.info("data_frozen", {"records": len(new_hashes)})
         

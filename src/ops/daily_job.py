@@ -153,7 +153,7 @@ class DailyJob:
         
         universe_info = self.universe.build_universe(data)
         
-        # Save universe info (JSON doesn't need WAP, but use atomic write)
+        # Save universe info (JSON with atomic write)
         import json
         universe_path = f"data/processed/universe_{trade_date}.json"
         temp_path = universe_path + '.tmp'
@@ -161,10 +161,8 @@ class DailyJob:
         with open(temp_path, 'w') as f:
             json.dump(universe_info, f, indent=2, default=str)
         
-        # Atomic rename
-        if os.path.exists(universe_path):
-            os.remove(universe_path)
-        os.rename(temp_path, universe_path)
+        # Atomic replace (O2 fix)
+        os.replace(temp_path, universe_path)
         
         return universe_info['metadata']
 

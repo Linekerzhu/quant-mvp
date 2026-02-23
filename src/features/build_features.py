@@ -67,6 +67,8 @@ class FeatureEngineer:
         df = self._calc_volatility_features_fast(df)
         df = self._calc_volume_features_fast(df)
         df = self._calc_mean_reversion_features_fast(df)
+        df = self._calc_market_features(df)  # B14: VIX + market breadth
+        df = self._calc_divergence_features(df)  # B15: price-volume divergence
         
         # Inject dummy noise feature (Plan v4)
         df = self._inject_dummy_noise(df)
@@ -350,5 +352,88 @@ class FeatureEngineer:
             lambda x: x.ewm(span=20, min_periods=1).std()
         )
         df['price_vs_ema20_zscore'] = (df['adj_close'] - ema) / ema_std.replace(0, np.nan)
+        
+        return df
+    
+    def _calc_market_features(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Calculate market-wide features (B14).
+        
+        These features require market-level data and are calculated
+        once per date then broadcast to all symbols.
+        
+        Features:
+        - vix_change_5d: VIX 5-day change rate (requires external VIX data)
+        - market_breadth: Advance/Decline ratio
+        """
+        # Market breadth: proportion of stocks advancing vs declining
+        # Calculate daily returns for each symbol
+        df['daily_return'] = df.groupby('symbol')['adj_close'].pct_change()
+        
+        # For each date, calculate market breadth
+        df['market_breadth'] = df.groupby('date')['daily_return'].transform(
+            lambda x: (x > 0).sum() / max((x != 0).sum(), 1)  # Advancing / Total non-zero
+        )
+        
+        # VIX change rate placeholder (would require VIX data fetch)
+        # For now, use realized volatility of SPY-like proxy (median cross-sectional vol)
+        # This is a simplified proxy - production should fetch actual VIX
+        df['vix_proxy_5d'] = df.groupby('date')['daily_return'].transform(
+            lambda x: x.std() * np.sqrt(252) if len(x) > 1 else 0.15
+        )
+        
+        # 5-day change in vol proxy
+        df['vix_change_5d'] = df.groupby('symbol')['vix_proxy_5d'].transform(
+            lambda x: (x - x.shift(5)) / x.shift(5).replace(0, np.nan)
+        )
+        
+        # Clean up temp column
+        df = df.drop(columns=['daily_return', 'vix_proxy_5d'])
+        
+        logger.info("market_features_calculated", {
+            "features": ["market_breadth", "vix_change_5d"]
+        })
+        
+        return df
+    
+    def _calc_divergence_features(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Calculate price-volume divergence features (B15).
+        
+        Detects divergences between price action and volume:
+        - Price rising but volume declining (weak trend)
+        - Price falling but volume declining (weak decline)
+        """
+        # Price trend (5-day slope)
+        df['price_trend_5d'] = df.groupby('symbol')['adj_close'].transform(
+            lambda x: (x - x.shift(5)) / x.shift(5).replace(0, np.nan)
+        )
+        
+        # Volume trend (5-day slope of relative volume)
+        df['volume_trend_5d'] = df.groupby('symbol')['relative_volume_20d'].transform(
+            lambda x: (x - x.shift(5)) / x.shift(5).replace(0, np.nan)
+        )
+        
+        # Divergence: price up, volume down (weak bullish)
+        df['pv_divergence_bull'] = ((df['price_trend_5d'] > 0) & 
+                                     (df['volume_trend_5d'] < 0)).astype(int)
+        
+        # Divergence: price down, volume down (weak bearish)
+        df['pv_divergence_bear'] = ((df['price_trend_5d'] < 0) & 
+                                     (df['volume_trend_5d'] < 0)).astype(int)
+        
+        # Continuous divergence score: correlation between price and volume trends
+        df['pv_correlation_5d'] = df.groupby('symbol').apply(
+            lambda g: g['price_trend_5d'].rolling(5, min_periods=3).corr(
+                g['volume_trend_5d']
+            )
+        ).reset_index(level=0, drop=True)
+        
+        # Clean up temp columns
+        df = df.drop(columns=['price_trend_5d', 'volume_trend_5d'])
+        
+        logger.info("divergence_features_calculated", {
+            "features": ["pv_divergence_bull", "pv_divergence_bear", "pv_correlation_5d"]
+        })
         
         return df

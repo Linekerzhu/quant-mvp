@@ -274,3 +274,69 @@ class TripleBarrierLabeler:
             'mean_return': float(valid_df['label_return'].mean()),
             'mean_holding_days': float(valid_df['label_holding_days'].mean())
         }
+    
+    def check_class_imbalance(self, df: pd.DataFrame) -> Dict:
+        """
+        Check for class imbalance and recommend class weights (B20).
+        
+        Returns:
+            Dict with class counts, ratios, and recommended class weights
+        """
+        valid_df = df[df['event_valid'] == True]
+        
+        if len(valid_df) == 0:
+            return {'error': 'No valid events'}
+        
+        # Count by label
+        profit = (valid_df['label'] == 1).sum()
+        loss = (valid_df['label'] == -1).sum()
+        neutral = (valid_df['label'] == 0).sum()
+        total = profit + loss + neutral
+        
+        if total == 0:
+            return {'error': 'No labeled events'}
+        
+        # Calculate ratios
+        profit_ratio = profit / total
+        loss_ratio = loss / total
+        neutral_ratio = neutral / total
+        
+        # Check imbalance severity
+        max_ratio = max(profit_ratio, loss_ratio, neutral_ratio)
+        min_ratio = min(profit_ratio, loss_ratio, neutral_ratio)
+        imbalance_ratio = max_ratio / max(min_ratio, 0.01)
+        
+        # Recommend class weights (inverse frequency)
+        class_weights = {
+            1: round(total / max(profit, 1), 2),
+            -1: round(total / max(loss, 1), 2),
+            0: round(total / max(neutral, 1), 2) if neutral > 0 else 0
+        }
+        
+        result = {
+            'class_counts': {
+                'profit': int(profit),
+                'loss': int(loss),
+                'neutral': int(neutral),
+                'total': int(total)
+            },
+            'class_ratios': {
+                'profit': round(profit_ratio, 4),
+                'loss': round(loss_ratio, 4),
+                'neutral': round(neutral_ratio, 4)
+            },
+            'imbalance_severity': round(imbalance_ratio, 2),
+            'is_imbalanced': imbalance_ratio > 2.0,
+            'recommended_class_weights': class_weights
+        }
+        
+        # Log warning if severely imbalanced
+        if result['is_imbalanced']:
+            logger.warn("class_imbalance_detected", {
+                "profit_ratio": profit_ratio,
+                "loss_ratio": loss_ratio,
+                "imbalance_ratio": imbalance_ratio,
+                "recommended_weights": class_weights
+            })
+        
+        return result

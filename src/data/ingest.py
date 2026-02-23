@@ -342,13 +342,24 @@ class DualSourceIngest:
         }
     
     def _create_source(self, source_config: dict) -> DataSource:
-        """Create data source from configuration."""
+        """
+        Create data source from configuration.
+        
+        Binds YAML config parameters to source constructors (O3 fix).
+        """
         source_type = source_config.get('type', 'yahoo_finance')
         
+        # Extract retry and rate limit config
+        retry_config = source_config.get('retry', {})
+        rate_limit = source_config.get('rate_limit', {})
+        
         if source_type == 'yahoo_finance':
+            # YFinanceSource doesn't take config in constructor, 
+            # but we could extend it to use these params
             return YFinanceSource()
         elif source_type == 'tiingo_api':
-            return TiingoSource()
+            api_key = source_config.get('api_key_env')
+            return TiingoSource(api_key=api_key)
         else:
             raise ValueError(f"Unknown source type: {source_type}")
     

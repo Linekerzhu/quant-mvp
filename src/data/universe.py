@@ -127,11 +127,21 @@ class UniverseManager:
         new_components: List[str],
         removed_components: List[str],
         current_positions: Dict[str, float],
-        df: pd.DataFrame
+        df: pd.DataFrame,
+        rebalance_date: Optional[str] = None,
+        evidence_url: Optional[str] = None
     ) -> Tuple[List[str], List[Dict]]:
         """
         Handle universe component changes.
         
+        Args:
+            new_components: List of new symbols added to universe
+            removed_components: List of symbols removed from universe
+            current_positions: Current portfolio positions
+            df: Price data DataFrame
+            rebalance_date: Rebalance effective date (ISO format)
+            evidence_url: URL to evidence/source document (Patch 5)
+            
         Returns:
             (new_universe, exit_orders)
         """
@@ -152,20 +162,28 @@ class UniverseManager:
                         'reason': 'component_removed',
                         'order_type': 'limit',
                         'limit_price': limit_price,
-                        'fallback': 'market_next_day'
+                        'fallback': 'market_next_day',
+                        # Patch 5 fields
+                        'rebalance_date_source': rebalance_date,
+                        'evidence': evidence_url
                     })
                     
                     logger.info("component_exit_order", {
                         "symbol": symbol,
                         "limit_price": limit_price,
-                        "reason": "component_removed"
+                        "reason": "component_removed",
+                        "rebalance_date": rebalance_date,
+                        "evidence": evidence_url
                     }, symbol)
         
         # New components go into cold start (data collection only)
         for symbol in new_components:
             logger.info("component_cold_start", {
                 "symbol": symbol,
-                "min_days": self.cold_start_days
+                "min_days": self.cold_start_days,
+                # Patch 5 fields
+                "rebalance_date": rebalance_date,
+                "evidence": evidence_url
             }, symbol)
         
         return exit_orders
@@ -224,23 +242,5 @@ class UniverseManager:
         
         return info
     
-    def check_pdt_compliance(
-        self,
-        trade_history: List[Dict],
-        symbol: str
-    ) -> bool:
-        """
-        Check if a trade would violate PDT rules.
-        
-        PDT: 4+ day trades in 5 rolling business days
-        """
-        # Get recent trades for this symbol
-        symbol_trades = [t for t in trade_history if t['symbol'] == symbol]
-        
-        # Count day trades (buy and sell same day)
-        day_trades = 0
-        for trade in symbol_trades[-5:]:  # Last 5 trades
-            if trade.get('is_day_trade', False):
-                day_trades += 1
-        
-        return day_trades < 4  # Would not trigger PDT
+    # Note: PDT compliance checking moved to src/risk/pdt_guard.py (O5 fix)
+    # Use PDTGuard class for PDT rule enforcement

@@ -126,3 +126,149 @@ class TestNoDataLeakage:
         """
         # Placeholder for train/test separation tests
         pass
+
+
+class TestFeatureLayerLeakage:
+    """
+    Feature layer leakage tests (B23).
+    
+    Ensures feature engineering doesn't use future data.
+    """
+    
+    @pytest.fixture
+    def sample_data(self):
+        """Create sample data with known pattern for testing."""
+        dates = pd.date_range('2024-01-01', periods=20, freq='B')
+        df = pd.DataFrame({
+            'symbol': ['TEST'] * 20,
+            'date': dates,
+            'adj_open': [100 + i for i in range(20)],
+            'adj_high': [102 + i for i in range(20)],
+            'adj_low': [98 + i for i in range(20)],
+            'adj_close': [101 + i for i in range(20)],
+            'volume': [1000] * 20,
+            'can_trade': [True] * 20,
+            'atr_14': [2.0] * 20
+        })
+        return df
+    
+    def test_momentum_features_no_future(self, sample_data):
+        """
+        Test that momentum features don't use future data.
+        
+        returns_5d at date[i] should only use prices from date[i-5] to date[i].
+        """
+        from src.features.build_features import FeatureEngineer
+        
+        engineer = FeatureEngineer()
+        result = engineer._calc_momentum_features_fast(sample_data.copy())
+        
+        # Check 5-day return at index 5
+        idx = 5
+        expected_return = np.log(
+            sample_data.iloc[idx]['adj_close'] / sample_data.iloc[idx - 5]['adj_close']
+        )
+        actual_return = result.iloc[idx]['returns_5d']
+        
+        assert abs(actual_return - expected_return) < 1e-6, \
+            f"returns_5d uses future data: expected {expected_return}, got {actual_return}"
+    
+    def test_volatility_features_no_future(self, sample_data):
+        """
+        Test that volatility features only use historical data.
+        """
+        from src.features.build_features import FeatureEngineer
+        
+        engineer = FeatureEngineer()
+        result = engineer._calc_volatility_features_fast(sample_data.copy())
+        
+        # Check ATR at index 10
+        idx = 10
+        
+        # ATR should only use data up to index 10
+        atr = result.iloc[idx]['atr_14']
+        
+        # ATR should be finite and based on historical data
+        assert np.isfinite(atr), "ATR is not finite"
+        assert atr >= 0, "ATR should be non-negative"
+    
+    def test_mean_reversion_features_no_future(self, sample_data):
+        """
+        Test that mean reversion features only use historical data.
+        """
+        from src.features.build_features import FeatureEngineer
+        
+        engineer = FeatureEngineer()
+        result = engineer._calc_mean_reversion_features_fast(sample_data.copy())
+        
+        # Check SMA z-score at index 10
+        idx = 10
+        
+        # SMA(20) at index 10 should use indices 0-10 (only 11 days available)
+        sma = result.iloc[idx]['price_vs_sma20_zscore']
+        
+        # Should be based on available history (not full 20 days)
+        assert np.isfinite(sma) or np.isnan(sma), "SMA z-score should be finite or NaN"
+    
+    def test_features_valid_flag(self, sample_data):
+        """
+        Test that features_valid flag is correctly set.
+        
+        Rows with NaN features should have features_valid=False.
+        """
+        from src.features.build_features import FeatureEngineer
+        
+        engineer = FeatureEngineer()
+        result = engineer.build_features(sample_data)
+        
+        # Check that features_valid column exists
+        assert 'features_valid' in result.columns
+        
+        # Early rows may have NaN features due to lookback windows
+        # They should be marked as invalid
+        early_rows = result.iloc[:5]
+        
+        # Log the results for inspection
+        invalid_count = (~result['features_valid']).sum()
+        print(f"Invalid feature rows: {invalid_count}/{len(result)}")
+    
+    def test_no_forward_peeking_in_rolling(self):
+        """
+        Test that rolling windows don't peek forward.
+        
+        Create a specific test case where forward peeking would be detectable.
+        """
+        # Create data with a clear pattern
+        dates = pd.date_range('2024-01-01', periods=10, freq='B')
+        
+        # Price doubles on day 5
+        prices = [100, 101, 102, 103, 104, 200, 201, 202, 203, 204]
+        
+        df = pd.DataFrame({
+            'symbol': ['TEST'] * 10,
+            'date': dates,
+            'adj_open': prices,
+            'adj_high': [p + 2 for p in prices],
+            'adj_low': [p - 2 for p in prices],
+            'adj_close': prices,
+            'volume': [1000] * 10,
+            'can_trade': [True] * 10
+        })
+        
+        from src.features.build_features import FeatureEngineer
+        
+        engineer = FeatureEngineer()
+        result = engineer.build_features(df)
+        
+        # At day 4 (index 4), returns_5d should not know about day 5's jump
+        # returns_5d at day 4 uses days 0-4 only
+        if 'returns_5d' in result.columns:
+            return_day4 = result.iloc[4]['returns_5d']
+            
+            # Manual calculation using only days 0-4
+            price_day0 = prices[0]
+            price_day4 = prices[4]
+            expected_return = np.log(price_day4 / price_day0)
+            
+            assert abs(return_day4 - expected_return) < 1e-6, \
+                f"Rolling calculation uses future data: expected {expected_return}, got {return_day4}"

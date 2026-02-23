@@ -56,8 +56,8 @@ class TestTripleBarrierLabeler:
         valid = result[result['event_valid'] == True]
         
         if len(valid) > 0:
-            # Labels should be 0 or 1
-            assert valid['label'].isin([0, 1]).all()
+            # Labels should be -1, 0, or 1 (unified semantics)
+            assert valid['label'].isin([-1, 0, 1]).all()
             
             # Barrier should be one of profit/loss/time
             assert valid['label_barrier'].isin(['profit', 'loss', 'time']).all()

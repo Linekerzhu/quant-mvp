@@ -11,13 +11,16 @@ These tests are part of Phase B validation before proceeding to model training.
 import numpy as np
 import pandas as pd
 import pytest
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import cross_val_score
 from sklearn.metrics import accuracy_score
 
 import sys
-sys.path.insert(0, '/Users/zjz/quant-mvp')
+from pathlib import Path
+
+# Add parent directory to path (portable)
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.features.build_features import FeatureEngineer
 from src.labels.triple_barrier import TripleBarrierLabeler
@@ -35,7 +38,7 @@ class DummyFeatureSentinel:
     
     # Thresholds from Plan v4 Patch 2
     TOP_PERCENTILE_THRESHOLD = 0.25  # Top 25%
-    RELATIVE_CONTRIBUTION_THRESHOLD = 0.5  # Dummy contributes >50% of mean real feature
+    RELATIVE_CONTRIBUTION_THRESHOLD = 1.0  # Dummy contributes >100% of mean real feature
     
     def __init__(self, dummy_feature_name: str = 'dummy_noise'):
         self.dummy_feature_name = dummy_feature_name

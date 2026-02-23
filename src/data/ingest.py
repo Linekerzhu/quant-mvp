@@ -301,13 +301,50 @@ class DualSourceIngest:
     - Primary source with automatic retry
     - Failover to backup on consecutive failures
     - Feature degradation logging when using backup
+    - Configuration loaded from data_sources.yaml
     """
     
-    def __init__(self):
-        self.primary = YFinanceSource()
-        self.backup = TiingoSource()
+    def __init__(self, config_path: str = "config/data_sources.yaml"):
+        self.config = self._load_config(config_path)
+        self.primary = self._create_source(self.config['sources']['primary'])
+        self.backup = self._create_source(self.config['sources']['backup'])
         self.using_backup = False
         self.failover_count = 0
+    
+    def _load_config(self, config_path: str) -> dict:
+        """Load data sources configuration from YAML."""
+        import yaml
+        
+        if not os.path.exists(config_path):
+            logger.warn("config_not_found", {"path": config_path, "using_defaults": True})
+            return self._default_config()
+        
+        with open(config_path, 'r') as f:
+            config = yaml.safe_load(f)
+        
+        logger.info("config_loaded", {"path": config_path})
+        return config
+    
+    def _default_config(self) -> dict:
+        """Default configuration if YAML not found."""
+        return {
+            'sources': {
+                'primary': {'name': 'yfinance', 'type': 'yahoo_finance', 'enabled': True},
+                'backup': {'name': 'tiingo', 'type': 'tiingo_api', 'enabled': True}
+            },
+            'failover': {'enabled': True, 'failover_threshold': 3}
+        }
+    
+    def _create_source(self, source_config: dict) -> DataSource:
+        """Create data source from configuration."""
+        source_type = source_config.get('type', 'yahoo_finance')
+        
+        if source_type == 'yahoo_finance':
+            return YFinanceSource()
+        elif source_type == 'tiingo_api':
+            return TiingoSource()
+        else:
+            raise ValueError(f"Unknown source type: {source_type}")
     
     def ingest(
         self,

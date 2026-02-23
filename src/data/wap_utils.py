@@ -57,12 +57,9 @@ def write_parquet_wap(
         if audit:
             _audit_parquet(temp_path, df)
         
-        # Step 3: Publish (atomic rename)
-        # On Unix, rename is atomic if destination doesn't exist
-        # On Windows, may need to remove first
-        if path.exists():
-            path.unlink()
-        temp_path.rename(path)
+        # Step 3: Publish (atomic replace)
+        # Use Path.replace() for atomic overwrite on POSIX systems
+        temp_path.replace(path)
         
         logger.debug("parquet_write_complete", {
             "path": str(path),

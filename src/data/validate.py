@@ -112,19 +112,24 @@ class DataValidator:
             
             # For each NaN group, check its length
             for group_id in nan_groups[nan_mask].unique():
-                group_mask = nan_groups == group_id
-                group_length = group_mask.sum()
+                group_mask_local = (nan_groups == group_id) & mask
+                group_indices = df.loc[mask][group_mask_local].index
                 
-                if group_length < self.max_consecutive_nan:
-                    # Within limit: forward fill this group
-                    for col in price_cols:
-                        if col in df.columns:
-                            col_values = df.loc[mask, col].copy()
-                            # Forward fill only this specific group
-                            last_valid = col_values[~group_mask].iloc[-1] if (~group_mask).any() else None
-                            if last_valid is not None:
-                                df.loc[mask & group_mask, col] = last_valid
-                                filled_count += group_mask.sum()
+                if len(group_indices) == 0:
+                    continue
+                
+                group_start_idx = group_indices[0]
+                
+                # FIXED: Only use preceding data (before the NaN group starts)
+                # This prevents lookahead bias
+                preceding_mask = (df.index < group_start_idx) & mask
+                preceding_values = df.loc[preceding_mask, col].dropna()
+                
+                last_valid = preceding_values.iloc[-1] if len(preceding_values) > 0 else None
+                
+                if last_valid is not None:
+                    df.loc[group_mask_local, col] = last_valid
+                    filled_count += group_mask_local.sum()
                 else:
                     # Exceeds limit: mark as suspension (don't fill)
                     suspension_marked += group_mask.sum()

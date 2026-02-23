@@ -8,6 +8,7 @@ import os
 from datetime import datetime, timedelta
 from typing import Optional
 import yaml
+import pandas as pd
 
 from src.data.ingest import DualSourceIngest
 from src.data.validate import DataValidator

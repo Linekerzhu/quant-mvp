@@ -53,7 +53,7 @@ class DataValidator:
         nan_count = nan_mask.sum()
         report["checks"]["missing_values"] = {"count": int(nan_count)}
         
-        # Handle consecutive NaN (halt detection) - FIXED A26
+        # Handle consecutive NaN (halt detection) - FIXED ALL BUGS
         df = self._handle_missing_values_fixed(df, report)
         
         # Check 3: Abnormal jumps (after split adjustment awareness)
@@ -81,7 +81,13 @@ class DataValidator:
         """
         Handle missing values with proper consecutive NaN detection.
         
-        FIXED A26: Correctly identifies consecutive NaN runs.
+        FIXED ALL BUGS:
+        1. Restored for col in price_cols loop
+        2. Restored group_length >= max_consecutive_nan check
+        3. Fixed lookahead bias (only use preceding data)
+        4. Fixed variable references in else branch
+        
+        Logic:
         - Single day NaN: Forward fill
         - 2-3 consecutive NaN: Forward fill (within limit)
         - >= max_consecutive_nan consecutive NaN: Mark as suspension (don't fill)
@@ -96,52 +102,50 @@ class DataValidator:
         
         for symbol in df['symbol'].unique():
             mask = df['symbol'] == symbol
-            
-            # Get close price for this symbol
             close_series = df.loc[mask, 'raw_close'].copy()
             
             if close_series.isna().sum() == 0:
                 continue
             
-            # Find NaN positions
             nan_mask = close_series.isna()
-            
-            # FIXED: Properly identify consecutive NaN runs
-            # Create group IDs for consecutive NaN segments
             nan_groups = (nan_mask != nan_mask.shift()).cumsum()
             
-            # For each NaN group, check its length
             for group_id in nan_groups[nan_mask].unique():
-                group_mask_local = (nan_groups == group_id) & mask
-                group_indices = df.loc[mask][group_mask_local].index
+                # Get boolean mask for this group within symbol
+                group_in_symbol = nan_groups == group_id
+                group_length = group_in_symbol.sum()
                 
-                if len(group_indices) == 0:
-                    continue
+                # Get global indices for this symbol
+                symbol_indices = df.loc[mask].index
                 
-                group_start_idx = group_indices[0]
+                # Build global mask for this NaN group
+                group_global_mask = pd.Series(False, index=df.index)
+                group_global_mask.loc[symbol_indices[group_in_symbol]] = True
                 
-                # FIXED: Only use preceding data (before the NaN group starts)
-                # This prevents lookahead bias
-                preceding_mask = (df.index < group_start_idx) & mask
-                preceding_values = df.loc[preceding_mask, col].dropna()
-                
-                last_valid = preceding_values.iloc[-1] if len(preceding_values) > 0 else None
-                
-                if last_valid is not None:
-                    df.loc[group_mask_local, col] = last_valid
-                    filled_count += group_mask_local.sum()
-                else:
-                    # Exceeds limit: mark as suspension (don't fill)
-                    suspension_marked += group_mask.sum()
+                if group_length >= self.max_consecutive_nan:
+                    # >= threshold: Mark as suspension, DO NOT fill
+                    suspension_marked += group_length
                     logger.warn("consecutive_nan_exceeds_limit", {
                         "symbol": symbol,
                         "consecutive_days": int(group_length),
                         "limit": self.max_consecutive_nan
                     })
+                    continue
+                
+                # < threshold: Forward fill using preceding data (NO lookahead bias)
+                group_start = symbol_indices[group_in_symbol][0]
+                preceding = df.loc[(df.index < group_start) & mask]
+                
+                for col in price_cols:  # BUG 1 FIX: Restore column loop
+                    if col not in df.columns:
+                        continue
+                    valid_preceding = preceding[col].dropna()
+                    if len(valid_preceding) > 0:
+                        df.loc[group_global_mask, col] = valid_preceding.iloc[-1]
+                        filled_count += group_global_mask.sum()
         
         report["checks"]["missing_values"]["filled"] = int(filled_count)
         report["checks"]["missing_values"]["suspension_marked"] = int(suspension_marked)
-        
         return df
     
     def _detect_anomalies(

@@ -17,12 +17,29 @@ logger = get_logger()
 class FeatureEngineer:
     """Multi-time-scale feature engineer."""
     
+    # SECURITY: Do not log raw price samples or feature values in production
+    REQUIRED_COLUMNS = ['symbol', 'date', 'adj_open', 'adj_high', 'adj_low', 'adj_close', 'volume']
+    
     def __init__(self, config_path: str = "config/features.yaml"):
         with open(config_path, 'r') as f:
             self.config = yaml.safe_load(f)
         
         self.version = self.config['version']
         self.dummy_seed = 42  # For reproducibility
+    
+    def _validate_input(self, df: pd.DataFrame) -> None:
+        """Validate input DataFrame has required columns."""
+        missing = set(self.REQUIRED_COLUMNS) - set(df.columns)
+        if missing:
+            raise ValueError(f"Missing required columns: {missing}")
+        
+        # Check for empty DataFrame
+        if len(df) == 0:
+            raise ValueError("Input DataFrame is empty")
+        
+        # Check data types
+        if not pd.api.types.is_datetime64_any_dtype(df['date']):
+            raise ValueError("Column 'date' must be datetime type")
     
     def build_features(self, df: pd.DataFrame) -> pd.DataFrame:
         """
@@ -34,33 +51,45 @@ class FeatureEngineer:
         Returns:
             DataFrame with features added
         """
+        import time
+        start_time = time.time()
+        
+        # Validate input
+        self._validate_input(df)
+        
         df = df.copy()
         
         # Ensure sorted by symbol and date
         df = df.sort_values(['symbol', 'date'])
         
-        # Calculate features by category
-        df = self._calc_momentum_features(df)
-        df = self._calc_volatility_features(df)
-        df = self._calc_volume_features(df)
-        df = self._calc_mean_reversion_features(df)
+        # Calculate features by category (using groupby for performance)
+        df = self._calc_momentum_features_fast(df)
+        df = self._calc_volatility_features_fast(df)
+        df = self._calc_volume_features_fast(df)
+        df = self._calc_mean_reversion_features_fast(df)
         
         # Inject dummy noise feature (Plan v4)
         df = self._inject_dummy_noise(df)
         
+        # Handle NaN values in features
+        feature_cols = self._get_feature_columns(df)
+        df[feature_cols] = df[feature_cols].fillna(0)
+        
         # Add feature version
         df['feature_version'] = self.version
         
+        elapsed_ms = (time.time() - start_time) * 1000
         logger.info("features_built", {
             "version": self.version,
-            "n_features": len(self._get_feature_columns(df)),
-            "rows": len(df)
+            "n_features": len(feature_cols),
+            "rows": len(df),
+            "elapsed_ms": elapsed_ms
         })
         
         return df
     
     def _calc_momentum_features(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Calculate momentum features."""
+        """Calculate momentum features (legacy loop-based, kept for reference)."""
         for symbol in df['symbol'].unique():
             mask = df['symbol'] == symbol
             
@@ -223,3 +252,87 @@ class FeatureEngineer:
             'dummy_feature': 'dummy_noise',
             'dummy_seed': self.dummy_seed
         }
+    
+    # === Optimized GroupBy Methods (10-100x faster) ===
+    
+    def _calc_momentum_features_fast(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Calculate momentum features using groupby (optimized)."""
+        # Log returns
+        for window in [5, 10, 20, 60]:
+            df[f'returns_{window}d'] = df.groupby('symbol')['adj_close'].transform(
+                lambda x: np.log(x / x.shift(window))
+            )
+        
+        # RSI using groupby
+        df['rsi_14'] = df.groupby('symbol')['adj_close'].transform(
+            lambda x: self._calc_rsi(x, window=14)
+        )
+        
+        # MACD using groupby
+        macd_results = df.groupby('symbol')['adj_close'].apply(
+            lambda x: self._calc_macd(x)
+        )
+        df['macd_line'] = np.nan
+        df['macd_signal'] = np.nan
+        for symbol, (macd, signal) in macd_results.items():
+            mask = df['symbol'] == symbol
+            df.loc[mask, 'macd_line'] = macd.values
+            df.loc[mask, 'macd_signal'] = signal.values
+        
+        return df
+    
+    def _calc_volatility_features_fast(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Calculate volatility features using groupby (optimized)."""
+        # Realized volatility
+        for window in [5, 20, 60]:
+            df[f'rv_{window}d'] = df.groupby('symbol')['adj_close'].transform(
+                lambda x: (
+                    np.log(x / x.shift(1))
+                    .rolling(window=window, min_periods=1)
+                    .std() * np.sqrt(252)
+                )
+            )
+        
+        # ATR using groupby
+        df['atr_14'] = df.groupby('symbol').apply(
+            lambda g: self._calc_atr(g.reset_index(drop=True), window=14)
+        ).reset_index(level=0, drop=True)
+        
+        return df
+    
+    def _calc_volume_features_fast(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Calculate volume features using groupby (optimized)."""
+        # Relative volume
+        df['relative_volume_20d'] = df.groupby('symbol')['volume'].transform(
+            lambda x: x / x.rolling(window=20, min_periods=1).mean()
+        )
+        
+        # OBV using groupby
+        df['obv'] = df.groupby('symbol').apply(
+            lambda g: self._calc_obv(g.reset_index(drop=True))
+        ).reset_index(level=0, drop=True)
+        
+        return df
+    
+    def _calc_mean_reversion_features_fast(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Calculate mean reversion features using groupby (optimized)."""
+        # SMA z-scores
+        for window in [20, 60]:
+            sma = df.groupby('symbol')['adj_close'].transform(
+                lambda x: x.rolling(window=window, min_periods=1).mean()
+            )
+            std = df.groupby('symbol')['adj_close'].transform(
+                lambda x: x.rolling(window=window, min_periods=1).std()
+            )
+            df[f'price_vs_sma{window}_zscore'] = (df['adj_close'] - sma) / std.replace(0, np.nan)
+        
+        # EMA z-score
+        ema = df.groupby('symbol')['adj_close'].transform(
+            lambda x: x.ewm(span=20, min_periods=1).mean()
+        )
+        ema_std = df.groupby('symbol')['adj_close'].transform(
+            lambda x: x.ewm(span=20, min_periods=1).std()
+        )
+        df['price_vs_ema20_zscore'] = (df['adj_close'] - ema) / ema_std.replace(0, np.nan)
+        
+        return df

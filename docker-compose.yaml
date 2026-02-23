@@ -1,0 +1,33 @@
+version: '3.8'
+
+services:
+  quant-mvp:
+    build: .
+    container_name: quant-mvp
+    volumes:
+      - ./data:/app/data
+      - ./models:/app/models
+      - ./reports:/app/reports
+      - ./logs:/app/logs
+      - ./.env:/app/.env:ro
+    environment:
+      - PYTHONPATH=/app
+      - LOG_LEVEL=INFO
+    command: python -m src.ops.daily_job
+    
+  # Optional: MLflow tracking server
+  mlflow:
+    image: python:3.11-slim
+    container_name: quant-mlflow
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./mlruns:/mlruns
+    working_dir: /mlruns
+    command: >
+      bash -c "pip install mlflow && mlflow server 
+      --host 0.0.0.0 
+      --port 5000 
+      --default-artifact-root /mlruns"
+    profiles:
+      - mlflow

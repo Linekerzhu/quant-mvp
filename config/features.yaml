@@ -1,0 +1,109 @@
+# Features Configuration
+# Feature registry with versioning
+
+# Feature version - increment on any change
+version: 1
+
+# Feature categories
+categories:
+  momentum:
+    description: Price momentum indicators
+    features:
+      - name: returns_5d
+        description: 5-day log returns
+        lookback: 5
+      - name: returns_10d
+        description: 10-day log returns
+        lookback: 10
+      - name: returns_20d
+        description: 20-day log returns
+        lookback: 20
+      - name: returns_60d
+        description: 60-day log returns
+        lookback: 60
+      - name: rsi_14
+        description: RSI(14)
+        lookback: 14
+      - name: macd_line
+        description: MACD line (12,26,9)
+        lookback: 26
+      - name: macd_signal
+        description: MACD signal line
+        lookback: 35
+  
+  volatility:
+    description: Volatility indicators
+    features:
+      - name: rv_5d
+        description: Realized volatility (5-day)
+        lookback: 5
+      - name: rv_20d
+        description: Realized volatility (20-day)
+        lookback: 20
+      - name: rv_60d
+        description: Realized volatility (60-day)
+        lookback: 60
+      - name: atr_14
+        description: Average True Range (14)
+        lookback: 14
+  
+  volume:
+    description: Volume-based indicators
+    features:
+      - name: relative_volume_20d
+        description: Volume vs 20-day average
+        lookback: 20
+      - name: obv
+        description: On-Balance Volume
+        lookback: 1  # Cumulative
+  
+  mean_reversion:
+    description: Mean reversion indicators
+    features:
+      - name: price_vs_sma20_zscore
+        description: Price vs SMA(20) z-score
+        lookback: 20
+      - name: price_vs_sma60_zscore
+        description: Price vs SMA(60) z-score
+        lookback: 60
+      - name: price_vs_ema20_zscore
+        description: Price vs EMA(20) z-score
+        lookback: 20
+  
+  market_regime:
+    description: Market regime indicators (soft features)
+    features:
+      - name: vix_change_5d
+        description: VIX 5-day change rate
+        lookback: 5
+      - name: market_breadth
+        description: Advance/Decline ratio
+        lookback: 1
+      - name: regime_volatility
+        description: Volatility regime (low/med/high)
+        lookback: 20
+      - name: regime_trend
+        description: Trend regime (ADX-based)
+        lookback: 14
+
+# Dummy feature for overfitting detection (Plan v4)
+dummy_features:
+  - name: dummy_noise
+    description: Gaussian white noise for overfitting detection
+    distribution: "N(0, 1)"
+    seed: 42  # For reproducibility
+    usage: sentinel_only  # Do not use in actual prediction
+
+# Feature stability monitoring
+stability:
+  monitoring: true
+  ic_lookback: 60  # Days for IC calculation
+  drift_threshold: 0.30  # Alert if IC correlation drops 30%
+
+# Feature importance tracking
+importance:
+  methods:
+    - gain
+    - shap
+  tracking: true
+  history_days: 252  # Keep 1 year of importance history

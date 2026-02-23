@@ -1,0 +1,118 @@
+# Training Configuration
+# Model training parameters and cost model schema
+
+# Model selection
+model:
+  primary: lightgbm
+  secondary: catboost  # For Phase C+ ensemble (conditional)
+  
+  # XGBoost reserved for comparison if overfitting issues
+  alternatives:
+    - xgboost
+
+# LightGBM parameters
+lightgbm:
+  objective: binary
+  metric: auc
+  boosting_type: gbdt
+  num_leaves: 31
+  learning_rate: 0.05
+  feature_fraction: 0.8
+  bagging_fraction: 0.8
+  bagging_freq: 5
+  verbose: -1
+  n_estimators: 100
+  
+  # Early stopping
+  early_stopping_rounds: 50
+
+# CatBoost parameters (for Phase C+)
+catboost:
+  objective: Logloss
+  eval_metric: AUC
+  learning_rate: 0.05
+  depth: 6
+  l2_leaf_reg: 3.0
+  iterations: 1000
+  early_stopping_rounds: 50
+  verbose: 100
+
+# Cross-validation
+validation:
+  # Combinatorial Purged Cross-Validation
+  cpcv:
+    n_splits: 10
+    n_test_splits: 2
+    purge_window: 10  # days
+    embargo_window: 60  # days
+  
+  # Walk-Forward validation
+  walk_forward:
+    train_window: 504  # 2 years (trading days)
+    test_window: 63    # 3 months
+    step: 63           # 3 months step
+
+# Overfitting detection
+overfitting:
+  # Probability of Backtest Overfitting
+  pbo_threshold: 0.30
+  pbo_reject: 0.50  # Hard gate: cannot proceed if PBO >= 0.5
+  
+  # Deflated Sharpe Ratio
+  deflated_sharpe_threshold: 0.0
+  deflated_sharpe_min: 0.0  # Hard gate: cannot proceed if <= 0
+  
+  # Dummy feature sentinel (Plan v4)
+  dummy_feature_sentinel:
+    enabled: true
+    ranking_threshold: 0.50  # Reject if dummy in top 50%
+    relative_threshold: 1.0  # Reject if dummy_gain / median_real_gain > 1.0
+
+# Time scramble sentinel
+scramble_sentinel:
+  enabled: true
+  n_runs: 5
+  auc_threshold: 0.55      # Mean AUC must be <= 0.55
+  auc_single_threshold: 0.58  # No single run > 0.58
+
+# Cost Model Schema (per Plan v4 patch)
+cost_model:
+  # Fixed costs
+  commission_per_share: 0.0       # Alpaca zero commission
+  sec_fee_rate: 0.0000278         # SEC fee (sell only)
+  taf_fee_per_share: 0.000166     # TAF fee
+  
+  # Calibratable parameters
+  spread_bps:
+    default: 1.0                  # Default spread assumption (bps)
+    by_adv_bucket:
+      low: 2.0                    # ADV < $20M
+      mid: 1.0                    # $20M <= ADV < $100M
+      high: 0.5                   # ADV >= $100M
+  
+  impact_bps:
+    model: linear_adv
+    coeff: 0.1                    # impact = coeff * (order_value / ADV)
+  
+  fill_probability:
+    premarket: 0.70
+    regular: 0.95
+  
+  # Calibration settings
+  calibration:
+    frequency: weekly
+    mid_price_definition: order_submission_mid
+    alert_threshold_mult: 2.0
+    min_samples_for_update: 20
+    max_param_change_pct: 100     # Per Plan v4 patch
+
+# Sample weights
+sample_weights:
+  method: uniqueness
+  min_weight: 0.01
+  max_weight: 10.0
+
+# Class imbalance
+class_imbalance:
+  handle: class_weight
+  monitor: true

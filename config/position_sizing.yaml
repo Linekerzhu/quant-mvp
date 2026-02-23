@@ -1,0 +1,81 @@
+# Position Sizing Configuration
+# Fractional Kelly position sizing
+
+# Kelly formula parameters
+kelly:
+  # Fractional Kelly coefficient (conservative)
+  fraction: 0.25  # 25% Kelly
+  
+  # Estimation window
+  estimation:
+    method: recent_trades_or_time
+    min_trades: 20  # Minimum closed trades for Kelly
+    max_trades: 50  # Maximum trades to consider
+    max_months: 6   # Or 6 months, whichever smaller sample
+  
+  # Fallback if insufficient trades
+  fallback:
+    enabled: true
+    method: equal_risk
+    formula: target_volatility / stock_volatility
+    normalize: true
+
+# Position calculation
+position:
+  # Independent Kelly per symbol (no covariance inversion)
+  method: independent_kelly_normalized
+  
+  # Kelly formula: f_i = p_i/a_i - (1-p_i)/b_i
+  # where:
+  #   p_i = win rate
+  #   a_i = average loss (positive number)
+  #   b_i = average win (positive number)
+  
+  # Scaling factors
+  scales:
+    confidence: true  # Scale by signal confidence
+    volatility: true  # Scale by target vol / realized vol
+    drawdown: true   # Scale down during drawdown
+  
+  # Volatility targeting
+  volatility_target:
+    annual_target: 0.15  # 15% target annual volatility
+    lookback: 20  # Days for realized vol calculation
+  
+  # Drawdown scaling
+  drawdown_scaling:
+    threshold: 0.05  # Start scaling at 5% drawdown
+    floor: 0.25      # Minimum 25% of original position
+    linear: true     # Linear reduction from threshold to floor
+
+# Portfolio constraints
+portfolio:
+  # Gross leverage limit
+  max_gross_leverage: 1.0
+  
+  # Normalization method when sum of Kelly > leverage limit
+  normalization:
+    method: proportional
+    formula: position_i * (max_leverage / sum_kelly)
+  
+  # Target number of positions
+  target_positions:
+    min: 5
+    max: 20
+    ideal: 10
+  
+  # Position concentration
+  concentration:
+    max_single_position: 0.10  # 10% max (also in risk_limits)
+    min_position_size: 0.01   # 1% minimum (avoid dust)
+
+# Rebalancing
+rebalancing:
+  frequency: daily
+  threshold: 0.02  # Rebalance if drift > 2%
+  
+  # Execution
+  execution:
+    method: limit_orders
+    time: premarket  # Extended hours
+    duration: day    # Day orders

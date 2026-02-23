@@ -1,0 +1,87 @@
+# Data Contract Configuration
+# Defines data specifications all modules must follow
+
+# Price fields
+prices:
+  # Primary price for returns calculation
+  primary: adj_close
+  
+  # Adjusted prices (backward-adjusted for splits + dividends)
+  adjusted:
+    - adj_open
+    - adj_high
+    - adj_low
+    - adj_close
+  
+  # Raw prices (actual trade prices)
+  raw:
+    - raw_open
+    - raw_high
+    - raw_low
+    - raw_close
+  
+  # Volume (unchanged by adjustments)
+  volume: volume
+
+# Returns calculation
+returns:
+  method: log
+  formula: "ln(adj_close_t / adj_close_t-1)"
+  
+# Corporate Actions
+corporate_actions:
+  # Split detection threshold
+  split_detection:
+    raw_change_threshold: 0.50  # 50% change in raw close
+    adj_change_threshold: 0.05  # 5% change in adj close
+  
+  # Dividend handling
+  dividends:
+    included_in_adj: true
+    separate_tracking: false
+  
+  # Delisting
+  delisting:
+    force_exit: true
+    exit_price: last_trade
+  
+  # Suspension
+  suspension:
+    min_consecutive_nan: 3
+    resume_min_days: 5
+
+# Point-in-Time constraints
+pit:
+  price_source: hash_frozen
+  corporate_action_latency: 0  # Same day availability (conservative)
+  
+# Data quality thresholds
+quality:
+  # Missing value handling
+  missing:
+    single_day: forward_fill
+    max_consecutive: 3
+  
+  # Anomaly detection
+  anomaly:
+    max_daily_return: 0.50  # 50% daily change (after split adjustment)
+    min_volume: 0  # Allow zero volume (illiquid days)
+  
+  # Drift detection (per plan_v4_patch)
+  drift:
+    single_day_threshold: warn
+    consecutive_days: 5  # ERROR if same symbol has 5+ days changed
+    universe_threshold: "max(10, 0.01 * universe_size)"  # Universe adaptive
+
+# Hash frozen fields for integrity checking
+hash_fields:
+  adjusted:
+    - adj_open
+    - adj_high
+    - adj_low
+    - adj_close
+    - volume
+  raw:
+    - raw_close
+  derived:
+    - adj_factor  # adj_close / raw_close

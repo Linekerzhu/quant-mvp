@@ -1,0 +1,19 @@
+# AI Agent Context Protection
+# Large data files that should not be loaded into AI context
+
+data/raw/**
+data/processed/**
+data/snapshots/**
+logs/**
+models/**
+reports/**
+
+*.parquet
+*.pkl
+*.joblib
+*.h5
+*.db
+
+# Test fixtures are small and allowed
+tests/fixtures/*.parquet
+tests/fixtures/*.csv

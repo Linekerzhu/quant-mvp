@@ -1,0 +1,63 @@
+# Universe Configuration
+# Stock universe definition and management
+
+# Base universe
+universe:
+  base: sp500  # S&P 500 components
+  
+  # Survivorship bias handling (Plan v4: Option B with interval estimation)
+  survivorship_bias:
+    method: current_components_with_disclosure  # Option B
+    # Interval estimates for reporting:
+    # - Stable regime: -1% to -2% annual return, +10% to +15% MDD
+    # - High volatility (VIX > 25): -2% to -4% annual, +15% to +25% MDD
+
+# Filters
+filters:
+  # Minimum average daily volume (USD)
+  min_adv_usd: 5000000  # $5M
+  
+  # Minimum listing years
+  min_listing_years: 2
+  
+  # Minimum history days for feature calculation
+  min_history_days: 60
+
+# Rebalancing
+rebalancing:
+  frequency: quarterly
+  
+  # Source of rebalance date (per plan_v4_patch)
+  date_source: manual  # "manual" or "auto"
+  # When manual: log evidence with URL to press release
+  
+  # Change effective date handling
+  effective_date_rule: actual_date  # Use actual effective date from source
+
+# Component change handling
+component_changes:
+  # New component cold start period
+  new_component:
+    min_history_days: 60  # Must accumulate 60 days before signal generation
+    data_collection: true  # Still collect data during cold start
+    signal_generation: false  # No signals during cold start
+  
+  # Removed component position handling
+  removed_component:
+    exit_method: limit_then_market
+    limit_slippage: 0.005  # 0.5% limit: close * 0.995
+    force_exit_days: 1  # If limit not filled, market order next day
+  
+  # Rebalance day signal freeze
+  rebalance_day:
+    freeze_new_signals: true
+    allow_exits_only: true
+
+# PDT Compliance
+pdt:
+  # Pattern Day Trader rule compliance
+  min_hold_days: 1  # Minimum 1 trading day hold (overnight)
+  prevent_day_trades: true  # Block same-day buy/sell
+
+# Configuration file path
+config_path: config/universe.yaml

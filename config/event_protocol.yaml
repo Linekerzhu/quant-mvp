@@ -1,0 +1,66 @@
+# Event Generation Protocol Configuration
+# Defines Triple Barrier and event behavior
+
+# Triple Barrier Parameters
+triple_barrier:
+  # ATR calculation
+  atr:
+    window: 20
+    min_atr_pct: 0.005  # Minimum 0.5% ATR floor
+  
+  # Profit taking / Stop loss multipliers
+  profit_take:
+    multiplier: 2.0  # tp = 2.0 * ATR
+  
+  stop_loss:
+    multiplier: 2.0  # sl = 2.0 * ATR
+  
+  # Maximum holding period
+  max_holding_days: 10
+
+# Event Definition
+events:
+  # One event per symbol per trading day maximum
+  max_per_symbol_per_day: 1
+  
+  # Event trigger time
+  trigger: close  # End of trading day
+  
+  # Holding period start
+  holding_start: t_plus_1_open  # Next day open
+  
+  # No overlapping events for same symbol
+  allow_overlap_same_symbol: false
+  
+  # Cross-symbol overlap allowed
+  allow_overlap_cross_symbol: true
+
+# Sample Weights
+sample_weights:
+  # Based on average uniqueness during event lifetime
+  method: uniqueness
+  
+  # Concurrency calculation window
+  window: event_lifetime  # From entry to exit
+  
+  # Weight formula
+  formula: "1 / avg_concurrent_events"
+
+# Purging and Embargo
+purging:
+  # Window to exclude after test period
+  window_days: 10  # = max_holding_days
+
+embargo:
+  # Window to exclude before test period
+  # = max(feature_lookback, execution_delay, corporate_action_latency)
+  feature_lookback: 60  # Maximum feature lookback window
+  execution_delay: 1    # Signal to execution delay
+  corporate_action_latency: 0  # Corporate action info delay
+  total_days: 60  # = max(60, 1, 0)
+
+# Class Imbalance
+class_imbalance:
+  monitoring: true
+  threshold: 0.70  # Warn if any class > 70%
+  handling: class_weight  # Use class_weight parameter

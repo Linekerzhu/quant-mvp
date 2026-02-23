@@ -1,0 +1,73 @@
+# Risk Limits Configuration
+# Multi-layer risk management
+
+# Layer 1: Signal Level
+signal_level:
+  # Confidence threshold for trade execution
+  confidence_threshold: 0.55  # Model probability threshold
+  
+  # Meta-labeling gate (if enabled)
+  meta_labeling:
+    min_samples: 5000  # Minimum samples to enable
+    threshold: 0.60    # Secondary model threshold
+
+# Layer 2: Position Level
+position_level:
+  # Single stock limit
+  single_stock_max: 0.10  # 10% max per position
+  
+  # Industry exposure limit
+  industry_max: 0.30  # 30% max per industry
+  
+  # Sector tracking
+  track_sectors: true
+  sector_source: gics
+
+# Layer 3: Portfolio Level
+portfolio_level:
+  # Daily loss limit
+  daily_loss_limit: 0.01  # 1% daily loss limit
+  
+  # Maximum drawdown
+  max_drawdown:
+    warning: 0.10   # 10% - reduce position
+    kill_switch: 0.12  # 12% - full exit
+  
+  # Consecutive loss protection
+  consecutive_losses:
+    threshold: 3  # Days
+    action: reduce_50_percent  # Reduce position by 50%
+  
+  # Total leverage
+  max_gross_leverage: 1.0  # No leverage
+  max_net_leverage: 1.0
+
+# Layer 4: System Level
+system_level:
+  # Kill switch triggers
+  kill_switch_triggers:
+    - max_drawdown_breach
+    - data_integrity_failure
+    - model_drift_severe
+    - execution_failure_repeated
+  
+  # Auto-degrade to paper trading
+  auto_degrade:
+    enabled: true
+    triggers:
+      - consecutive_daily_sharpe_low  # 5 days daily Sharpe < -1
+      - drawdown_threshold  # 8% drawdown
+    
+# PDT Guard
+pdt_guard:
+  enabled: true
+  max_day_trades: 3  # Per 5 rolling business days
+  pattern_threshold: 4  # 4+ day trades = PDT flag
+  
+  # Account requirements
+  min_account_value: 25000  # To avoid PDT restriction
+  account_type: margin  # Per Plan v4 patch: MARGIN required
+  
+  # Prevention
+  block_potential_day_trade: true
+  warn_before_day_trade: true

@@ -311,10 +311,10 @@ class FeatureEngineer:
                 )
             )
         
-        # ATR using groupby
-        df['atr_14'] = df.groupby('symbol').apply(
+        # ATR using groupby (fixed: group_keys=False + .values)
+        df['atr_14'] = df.groupby('symbol', group_keys=False).apply(
             lambda g: self._calc_atr(g.reset_index(drop=True), window=14)
-        ).reset_index(level=0, drop=True)
+        ).values
         
         return df
     
@@ -325,10 +325,10 @@ class FeatureEngineer:
             lambda x: x / x.rolling(window=20, min_periods=1).mean()
         )
         
-        # OBV using groupby
-        df['obv'] = df.groupby('symbol').apply(
+        # OBV using groupby (fixed: group_keys=False + .values)
+        df['obv'] = df.groupby('symbol', group_keys=False).apply(
             lambda g: self._calc_obv(g.reset_index(drop=True))
-        ).reset_index(level=0, drop=True)
+        ).values
         
         return df
     
@@ -382,10 +382,13 @@ class FeatureEngineer:
             lambda x: x.std() * np.sqrt(252) if len(x) > 1 else 0.15
         )
         
-        # 5-day change in vol proxy
-        df['vix_change_5d'] = df.groupby('symbol')['vix_proxy_5d'].transform(
-            lambda x: (x - x.shift(5)) / x.shift(5).replace(0, np.nan)
-        )
+        # 5-day change in vol proxy (fixed: calculate once per date, broadcast to all symbols)
+        # First, get unique dates and their vix_proxy values
+        date_vol_proxy = df.groupby('date')['vix_proxy_5d'].first().reset_index()
+        date_vol_proxy['vix_change_5d'] = date_vol_proxy['vix_proxy_5d'].pct_change(periods=5)
+        
+        # Merge back to df
+        df = df.merge(date_vol_proxy[['date', 'vix_change_5d']], on='date', how='left')
         
         # Clean up temp column
         df = df.drop(columns=['daily_return', 'vix_proxy_5d'])
@@ -422,12 +425,12 @@ class FeatureEngineer:
         df['pv_divergence_bear'] = ((df['price_trend_5d'] < 0) & 
                                      (df['volume_trend_5d'] < 0)).astype(int)
         
-        # Continuous divergence score: correlation between price and volume trends
-        df['pv_correlation_5d'] = df.groupby('symbol').apply(
+        # Continuous divergence score: correlation between price and volume trends (fixed)
+        df['pv_correlation_5d'] = df.groupby('symbol', group_keys=False).apply(
             lambda g: g['price_trend_5d'].rolling(5, min_periods=3).corr(
                 g['volume_trend_5d']
             )
-        ).reset_index(level=0, drop=True)
+        ).values
         
         # Clean up temp columns
         df = df.drop(columns=['price_trend_5d', 'volume_trend_5d'])

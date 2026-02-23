@@ -358,8 +358,8 @@ class DualSourceIngest:
             # but we could extend it to use these params
             return YFinanceSource()
         elif source_type == 'tiingo_api':
-            api_key = source_config.get('api_key_env')
-            return TiingoSource(api_key=api_key)
+            api_key_env = source_config.get('api_key_env', 'TIINGO_API_KEY')
+            return TiingoSource(api_key=os.getenv(api_key_env))  # Fixed: look up env var
         else:
             raise ValueError(f"Unknown source type: {source_type}")
     

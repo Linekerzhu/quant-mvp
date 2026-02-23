@@ -72,8 +72,9 @@ class TestTripleBarrierLabeler:
         dist = labeler.get_label_distribution(result)
         
         assert 'total_events' in dist
-        assert 'positive' in dist
-        assert 'negative' in dist
+        assert 'by_label' in dist
+        assert 'profit' in dist['by_label']  # Fixed: was 'positive'
+        assert 'loss' in dist['by_label']    # Fixed: was 'negative'
         assert 'mean_return' in dist
 
 

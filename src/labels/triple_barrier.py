@@ -208,21 +208,21 @@ class TripleBarrierLabeler:
             # Check profit barrier
             if day_high >= profit_barrier:
                 exit_price = profit_barrier
-                ret = (exit_price - entry_price) / entry_price
+                ret = np.log(exit_price / entry_price)  # B24: Log return
                 # Unified label semantics: 1=profit, -1=loss, 0=time
                 return (1, 'profit', ret, day, exit_date)
             
             # Check loss barrier
             if day_low <= loss_barrier:
                 exit_price = loss_barrier
-                ret = (exit_price - entry_price) / entry_price
+                ret = np.log(exit_price / entry_price)  # B24: Log return
                 return (-1, 'loss', ret, day, exit_date)
         
         # Time barrier hit
         exit_idx = min(entry_idx + self.max_holding_days, len(symbol_df) - 1)
         exit_date = symbol_df.loc[exit_idx, 'date']
         exit_price = symbol_df.loc[exit_idx, 'adj_close']
-        ret = (exit_price - entry_price) / entry_price
+        ret = np.log(exit_price / entry_price)  # B24: Log return
         
         # Time barrier label: use sign of return
         label = 1 if ret > 0 else -1 if ret < 0 else 0

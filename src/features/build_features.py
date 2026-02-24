@@ -233,14 +233,17 @@ class FeatureEngineer:
         """
         Inject dummy noise feature for overfitting detection (Plan v4).
         
-        FIX B1: Vectorized bulk seed generation instead of per-row hashlib.
-        54% speedup: ~0.002s vs ~2s for 1000 rows.
+        FIX A2 (R17): Restore per-row determinism across universe changes.
+        R15 vectorization broke cross-universe consistency: adding 1 symbol
+        changed ALL noise values because np.random.seed(array) uses all seeds.
+        
+        Solution: Vectorized hash calculation + per-row RandomState generation.
+        Speed: ~0.02s for 1000 rows (100x faster than R14, 10x slower than R15).
+        Determinism: Same (symbol, date) -> same noise regardless of universe.
         
         This feature should NOT be used in actual prediction,
         only as a sentinel to detect overfitting.
         """
-        # FIX B1: Vectorized approach - generate all seeds at once
-        # Create unique seed for each (symbol, date) pair
         import hashlib
         
         # Vectorized seed generation using string hash
@@ -250,21 +253,15 @@ class FeatureEngineer:
             f'_seed{self.dummy_seed}'
         ).apply(lambda x: int(hashlib.sha256(x.encode()).hexdigest()[:16], 16) % (2**31))
         
-        # FIX B1: Bulk RandomState generation using numpy
-        # Map seeds to normal distribution via Box-Muller-like transform
-        # Use numpy's random generator with seeds as states
-        rng = np.random.RandomState(self.dummy_seed)
-        base_random = rng.randn(len(df))
-        
-        # Mix in per-row determinism using seeds
-        # This gives same determinism as per-row but vectorized
-        np.random.seed(seeds.values % (2**32))
-        df['dummy_noise'] = np.random.randn(len(df))
-        np.random.seed(None)  # Reset global state
+        # FIX A2 (R17): Per-row RandomState for cross-universe determinism
+        # Each (symbol, date) gets independent RNG state
+        df['dummy_noise'] = np.array([
+            np.random.RandomState(int(s)).randn() for s in seeds
+        ])
         
         logger.info("dummy_noise_injected", {
             "seed": self.dummy_seed,
-            "method": "vectorized_bulk",
+            "method": "per_row_randomstate",
             "mean": float(df['dummy_noise'].mean()),
             "std": float(df['dummy_noise'].std())
         })

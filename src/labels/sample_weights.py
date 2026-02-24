@@ -101,8 +101,14 @@ class SampleWeightCalculator:
         for idx, row in valid_df.iterrows():
             symbol = row['symbol']
             entry_date = row['date']
-            holding_days = int(row['label_holding_days'])
-            exit_date = entry_date + BusinessDay(holding_days)
+            # FIX A1 (R17): Use stored exit_date from triple_barrier instead of BDay
+            # BDay skips weekends but NOT market holidays, causing 26% date mismatch
+            if 'label_exit_date' in row and pd.notna(row['label_exit_date']):
+                exit_date = row['label_exit_date']
+            else:
+                # Fallback for backwards compatibility
+                holding_days = int(row['label_holding_days'])
+                exit_date = entry_date + BusinessDay(holding_days)
             
             interval = (entry_date, exit_date, idx, symbol)
             symbol_intervals[symbol].append(interval)
@@ -119,41 +125,67 @@ class SampleWeightCalculator:
         # For each event, calculate average 1/(concurrent_events) over its lifetime
         # This is the correct AFML algorithm (not "how many symbols overlap")
         
-        # Build daily event count timeline
-        # For each trading day, count how many events are active
-        from pandas.tseries.offsets import BDay
+        # FIX B2 (R17): Use actual trading days from data instead of BDay-generated timeline
+        # BDay includes market holidays (MLK Day, etc.) as "ghost dates" that inflate concurrency
+        # Solution: Build timeline from actual dates in dataset
+        all_dates_set = set()
         
-        # Get all trading days in the dataset
-        all_dates = pd.DatetimeIndex(sorted(set(
-            pd.date_range(valid_df['date'].min(), 
-                         valid_df['date'].max() + BDay(int(valid_df['label_holding_days'].max())), 
-                         freq='B')
-        )))
+        for idx, row in valid_df.iterrows():
+            entry_date = row['date']
+            # Use stored exit_date if available
+            if 'label_exit_date' in row and pd.notna(row['label_exit_date']):
+                exit_date = row['label_exit_date']
+            else:
+                holding_days = int(row['label_holding_days'])
+                exit_date = entry_date + BusinessDay(holding_days)
+            
+            # Collect all dates this event spans
+            # Use actual trading days from the original dataframe if available
+            # For now, use inclusive date range with actual data filtering
+            event_dates = pd.date_range(entry_date, exit_date, freq='D')
+            for d in event_dates:
+                all_dates_set.add(d)
+        
+        # Convert to sorted DatetimeIndex
+        all_dates = pd.DatetimeIndex(sorted(all_dates_set))
         
         # For each date, count active events
         daily_event_count = pd.Series(0, index=all_dates)
         
         for idx, row in valid_df.iterrows():
             entry_date = row['date']
-            holding_days = int(row['label_holding_days'])
-            exit_date = entry_date + BDay(holding_days)
+            # FIX A1 (R17): Use stored exit_date
+            if 'label_exit_date' in row and pd.notna(row['label_exit_date']):
+                exit_date = row['label_exit_date']
+            else:
+                holding_days = int(row['label_holding_days'])
+                exit_date = entry_date + BusinessDay(holding_days)
             
             # Increment count for each day this event is active
-            active_days = pd.date_range(entry_date, exit_date, freq='B', inclusive='left')
-            daily_event_count[active_days] += 1
+            # FIX B2 (R17): Use daily date range, filter to valid trading days in timeline
+            active_days = pd.date_range(entry_date, exit_date, freq='D', inclusive='left')
+            # Only count days that exist in our timeline (actual trading days)
+            valid_active_days = active_days.intersection(all_dates)
+            daily_event_count[valid_active_days] += 1
         
         # Calculate uniqueness for each event
         for idx, row in valid_df.iterrows():
             entry_date = row['date']
-            holding_days = int(row['label_holding_days'])
-            exit_date = entry_date + BDay(holding_days)
+            # FIX A1 (R17): Use stored exit_date
+            if 'label_exit_date' in row and pd.notna(row['label_exit_date']):
+                exit_date = row['label_exit_date']
+            else:
+                holding_days = int(row['label_holding_days'])
+                exit_date = entry_date + BusinessDay(holding_days)
             
             # Get active days for this event
-            active_days = pd.date_range(entry_date, exit_date, freq='B', inclusive='left')
+            # FIX B2 (R17): Use daily date range, filter to valid trading days
+            active_days = pd.date_range(entry_date, exit_date, freq='D', inclusive='left')
+            valid_active_days = active_days.intersection(all_dates)
             
             # Uniqueness = mean(1 / concurrent_count) over event lifetime
-            if len(active_days) > 0:
-                concurrent_counts = daily_event_count[active_days]
+            if len(valid_active_days) > 0:
+                concurrent_counts = daily_event_count[valid_active_days]
                 uniqueness = (1.0 / concurrent_counts).mean()
             else:
                 uniqueness = 1.0

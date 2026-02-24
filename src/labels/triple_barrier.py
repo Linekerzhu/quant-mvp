@@ -80,6 +80,7 @@ class TripleBarrierLabeler:
         df['label_barrier'] = None
         df['label_return'] = np.nan
         df['label_holding_days'] = np.nan
+        df['label_exit_date'] = pd.NaT  # FIX A1 (R17): Store actual exit date
         df['event_valid'] = False
         
         # Reset active events tracking
@@ -122,6 +123,7 @@ class TripleBarrierLabeler:
                 df.loc[(df['symbol'] == symbol) & (df['date'] == trigger_date), 'label_barrier'] = barrier
                 df.loc[(df['symbol'] == symbol) & (df['date'] == trigger_date), 'label_return'] = ret
                 df.loc[(df['symbol'] == symbol) & (df['date'] == trigger_date), 'label_holding_days'] = actual_holding_days
+                df.loc[(df['symbol'] == symbol) & (df['date'] == trigger_date), 'label_exit_date'] = exit_date  # FIX A1 (R17)
                 df.loc[(df['symbol'] == symbol) & (df['date'] == trigger_date), 'event_valid'] = True
         
         valid_count = df['event_valid'].sum()
@@ -151,9 +153,17 @@ class TripleBarrierLabeler:
         """
         symbol = symbol_df.loc[idx, 'symbol']
         
-        # Must have ATR
-        if pd.isna(symbol_df.loc[idx, self.atr_col]):
-            return False, 'missing_atr'
+        # FIX B1 (R17): Check ATR with fallback for backup sources
+        # When source_provides_adj_ohlc=False (e.g., Tiingo), ATR is NaN
+        # But we can use raw OHLC as fallback for barrier calculation
+        atr_value = symbol_df.loc[idx, self.atr_col] if self.atr_col in symbol_df.columns else np.nan
+        
+        if pd.isna(atr_value):
+            # Check if we have raw OHLC for fallback ATR calculation
+            has_raw_ohlc = all(col in symbol_df.columns for col in ['raw_high', 'raw_low'])
+            if not has_raw_ohlc:
+                return False, 'missing_atr'
+            # If we have raw OHLC, allow the event (ATR will be calculated from raw data)
         
         # FIX B1: Defense-in-depth - check features_valid if available
         if 'features_valid' in symbol_df.columns and not symbol_df.loc[idx, 'features_valid']:
@@ -189,12 +199,34 @@ class TripleBarrierLabeler:
         Returns:
             (label, barrier_hit, return, holding_days, exit_date)
         """
-        # Entry price (T+1 open)
-        entry_price = symbol_df.loc[entry_idx + 1, 'adj_open']
+        # FIX B1 (R17): Handle backup sources without reliable adj OHLC
+        # Check if we have adj_open or need to fall back to raw prices
+        has_adj_ohlc = all(col in symbol_df.columns and pd.notna(symbol_df.loc[entry_idx + 1, col]) 
+                          for col in ['adj_open', 'adj_high', 'adj_low', 'adj_close'])
+        
+        if has_adj_ohlc:
+            # Entry price (T+1 open)
+            entry_price = symbol_df.loc[entry_idx + 1, 'adj_open']
+        else:
+            # Fallback to raw close (Tiingo has adj_close but not adj_open)
+            # Use adj_close as proxy for entry price
+            entry_price = symbol_df.loc[entry_idx + 1, 'adj_close']
+        
         entry_date = symbol_df.loc[entry_idx + 1, 'date']
         
         # ATR at trigger
-        atr = symbol_df.loc[entry_idx, self.atr_col]
+        atr = symbol_df.loc[entry_idx, self.atr_col] if self.atr_col in symbol_df.columns else np.nan
+        
+        # FIX B1 (R17): Fallback ATR from raw OHLC if primary ATR unavailable
+        if pd.isna(atr):
+            if all(col in symbol_df.columns for col in ['raw_high', 'raw_low']):
+                # Use raw high-low range as ATR approximation
+                # This is less accurate but allows Tiingo failover to generate events
+                # Calculate rolling mean of (high - low) for the ATR window
+                start_idx = max(0, entry_idx - self.atr_window + 1)
+                atr = (symbol_df.loc[start_idx:entry_idx, 'raw_high'] - 
+                       symbol_df.loc[start_idx:entry_idx, 'raw_low']).mean()
+        
         atr = max(atr, entry_price * self.min_atr_pct)
         
         # Set barriers
@@ -207,9 +239,14 @@ class TripleBarrierLabeler:
         for day in range(1, max_day):
             idx = entry_idx + day
             
-            # Get day's high and low
-            day_high = symbol_df.loc[idx, 'adj_high']
-            day_low = symbol_df.loc[idx, 'adj_low']
+            # FIX B1 (R17): Use adj OHLC if available, else raw OHLC
+            if has_adj_ohlc:
+                day_high = symbol_df.loc[idx, 'adj_high']
+                day_low = symbol_df.loc[idx, 'adj_low']
+            else:
+                day_high = symbol_df.loc[idx, 'raw_high'] if 'raw_high' in symbol_df.columns else symbol_df.loc[idx, 'adj_close']
+                day_low = symbol_df.loc[idx, 'raw_low'] if 'raw_low' in symbol_df.columns else symbol_df.loc[idx, 'adj_close']
+            
             exit_date = symbol_df.loc[idx, 'date']
             
             # Check profit barrier

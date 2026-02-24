@@ -59,6 +59,9 @@ class DataValidator:
         # Check 3: Abnormal jumps (after split adjustment awareness)
         df = self._detect_anomalies(df, report)
         
+        # FIX B3: Check price positivity and OHLC consistency
+        df = self._check_price_integrity(df, report)
+        
         # Check 4: Suspension detection (max_consecutive_nan+ days of NaN after handling)
         df = self._detect_suspension(df, report)
         
@@ -227,5 +230,89 @@ class DataValidator:
             "suspension_count": len(suspensions),
             "details": suspensions
         }
+        
+        return df
+
+    def _check_price_integrity(
+        self,
+        df: pd.DataFrame,
+        report: dict
+    ) -> pd.DataFrame:
+        """
+        FIX B3: Check price positivity and OHLC consistency.
+        
+        Validates:
+        - All prices > 0 (negative prices indicate data corruption)
+        - High >= max(Open, Close) (High should be highest)
+        - Low <= min(Open, Close) (Low should be lowest)
+        - Volume >= 0
+        """
+        price_cols = ['raw_open', 'raw_high', 'raw_low', 'raw_close',
+                     'adj_open', 'adj_high', 'adj_low', 'adj_close']
+        
+        violations = []
+        
+        # Check 1: Price positivity
+        for col in price_cols:
+            negative_mask = df[col] <= 0
+            negative_count = negative_mask.sum()
+            if negative_count > 0:
+                violations.append({
+                    'check': 'price_positive',
+                    'column': col,
+                    'count': int(negative_count)
+                })
+                # Mark as invalid
+                df.loc[negative_mask, 'can_trade'] = False
+        
+        # Check 2: OHLC consistency - High >= max(Open, Close)
+        for prefix in ['raw_', 'adj_']:
+            ohlc_mask = (
+                (df[f'{prefix}high'] < df[f'{prefix}open']) |
+                (df[f'{prefix}high'] < df[f'{prefix}close'])
+            )
+            ohlc_count = ohlc_mask.sum()
+            if ohlc_count > 0:
+                violations.append({
+                    'check': 'ohlc_high_consistency',
+                    'prefix': prefix,
+                    'count': int(ohlc_count)
+                })
+                df.loc[ohlc_mask, 'can_trade'] = False
+            
+            # Check 3: OHLC consistency - Low <= min(Open, Close)
+            ohlc_mask = (
+                (df[f'{prefix}low'] > df[f'{prefix}open']) |
+                (df[f'{prefix}low'] > df[f'{prefix}close'])
+            )
+            ohlc_count = ohlc_mask.sum()
+            if ohlc_count > 0:
+                violations.append({
+                    'check': 'ohlc_low_consistency',
+                    'prefix': prefix,
+                    'count': int(ohlc_count)
+                })
+                df.loc[ohlc_mask, 'can_trade'] = False
+        
+        # Check 4: Volume non-negative
+        volume_mask = df['volume'] < 0
+        volume_count = volume_mask.sum()
+        if volume_count > 0:
+            violations.append({
+                'check': 'volume_non_negative',
+                'count': int(volume_count)
+            })
+            df.loc[volume_mask, 'can_trade'] = False
+        
+        report["checks"]["price_integrity"] = {
+            "passed": len(violations) == 0,
+            "violations": violations
+        }
+        
+        if violations:
+            logger.warn("price_integrity_violations", {
+                "count": len(violations),
+                "details": violations[:5]  # Log first 5
+            })
         
         return df

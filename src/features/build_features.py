@@ -75,7 +75,7 @@ class FeatureEngineer:
         if not provides_adj_ohlc:
             logger.warn("feature_degradation_ohlc_disabled", {
                 "reason": "backup_source_no_adj_ohlc",
-                "disabled_features": ["atr_14", "rsi_14", "macd_line", "macd_signal", "pv_correlation_5d"],
+                "disabled_features": [f"atr_{self.atr_window}", "rsi_14", "macd_line", "macd_signal", "pv_correlation_5d"],
                 "retained_features": ["returns_*d", "rv_*d", "relative_volume_20d", "obv", "sma/ema_zscore", "market_breadth", "vix_change_5d", "pv_divergence_*"]
             })
         

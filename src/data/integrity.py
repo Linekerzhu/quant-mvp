@@ -191,13 +191,31 @@ class IntegrityManager:
         # Determine severity (Plan v4 adaptive threshold)
         drift_threshold = max(10, int(0.01 * universe_size))
         
+        # FIX B1: Separate raw vs adj drift - only raw drift should trigger freeze
+        # adj drift is expected due to yfinance retroactive dividend adjustments
+        raw_drift_events = [e for e in drift_events if 'raw' in e['drift_type']]
+        adj_only_events = [e for e in drift_events if e['drift_type'] == ['adj'] or e['drift_type'] == ['adj', 'adj_factor']]
+        
+        if adj_only_events:
+            logger.info("adj_recalc_expected", {
+                "count": len(adj_only_events),
+                "note": "Dividend adjustments are retroactively applied by yfinance"
+            })
+        
+        # Use only raw drift for freeze decision
         should_freeze = False
         
         if len(drift_events) == 0:
             logger.info("drift_check_passed", {"drifts": 0})
-        elif len(drift_events) == 1:
-            # Single day drift - WARN only
-            logger.warn("single_day_drift", drift_events[0], drift_events[0]['symbol'])
+        elif len(raw_drift_events) == 0 and len(adj_only_events) > 0:
+            # Only adj drift - INFO only, no freeze
+            logger.info("adj_only_drift_no_freeze", {
+                "adj_drifts": len(adj_only_events)
+            })
+        elif len(raw_drift_events) == 1:
+            # Single day raw drift - WARN only
+            logger.warn("single_day_raw_drift", raw_drift_events[0], raw_drift_events[0]['symbol'])
+        else:
         else:
             # FIXED A25: Check for consecutive TRADING days per symbol (not calendar days)
             max_consecutive = 0
@@ -216,28 +234,28 @@ class IntegrityManager:
                         consecutive = 1
                 max_consecutive = max(max_consecutive, consecutive)
             
-            # Check universe threshold
-            unique_symbols = len(set(e['symbol'] for e in drift_events))
+            # Check universe threshold - use raw_drift only
+            unique_raw_symbols = len(set(e['symbol'] for e in raw_drift_events))
             
             if max_consecutive >= 5:
                 # ERROR: Same symbol 5+ consecutive days
-                logger.error("consecutive_drift", {
+                logger.error("consecutive_raw_drift", {
                     "max_consecutive": max_consecutive,
                     "symbols": list(symbol_day_drifts.keys())[:5]
                 })
                 should_freeze = True
-            elif unique_symbols >= drift_threshold:
+            elif unique_raw_symbols >= drift_threshold:
                 # ERROR: Universe threshold
-                logger.error("universe_drift_threshold", {
-                    "drift_symbols": unique_symbols,
+                logger.error("universe_raw_drift_threshold", {
+                    "drift_symbols": unique_raw_symbols,
                     "threshold": drift_threshold
                 })
                 should_freeze = True
             else:
                 # Multiple single-day drifts - WARN
-                logger.warn("multiple_single_day_drifts", {
-                    "count": len(drift_events),
-                    "symbols": unique_symbols
+                logger.warn("multiple_single_day_raw_drifts", {
+                    "count": len(raw_drift_events),
+                    "symbols": unique_raw_symbols
                 })
         
         return should_freeze, drift_events

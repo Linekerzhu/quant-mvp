@@ -95,9 +95,8 @@ class YFinanceSource(DataSource):
         Fetches both adjusted and raw prices for proper corporate action detection.
         """
         all_data = []
-        # FIX C2: Track max consecutive failures (not just tail)
+        # FIX A1: Track current consecutive failures (reset on success)
         failures = 0
-        max_consecutive = 0
         
         for symbol in symbols:
             try:
@@ -112,7 +111,6 @@ class YFinanceSource(DataSource):
                 if adj_hist.empty:
                     logger.warn("data_fetch_empty", {"symbol": symbol, "source": "yfinance", "type": "adj"})
                     failures += 1
-                    max_consecutive = max(max_consecutive, failures)
                     continue
                 
                 time.sleep(0.5)  # Rate limiting between calls
@@ -123,11 +121,9 @@ class YFinanceSource(DataSource):
                 if raw_hist.empty:
                     logger.warn("data_fetch_empty", {"symbol": symbol, "source": "yfinance", "type": "raw"})
                     failures += 1
-                    max_consecutive = max(max_consecutive, failures)
                     continue
                 
-                # FIX C2: Reset failure count on success, track max
-                max_consecutive = max(max_consecutive, failures)
+                # FIX C2: Reset failure count on success
                 failures = 0
                 
                 # Merge adjusted and raw data
@@ -182,11 +178,10 @@ class YFinanceSource(DataSource):
             except Exception as e:
                 logger.error("data_fetch_error", {"symbol": symbol, "error": str(e), "source": "yfinance"})
                 failures += 1
-                max_consecutive = max(max_consecutive, failures)
                 continue
         
-        # FIX C2: Store max consecutive failures
-        self.consecutive_failures = max_consecutive
+        # FIX A1: Use current consecutive failures (not max), reset to 0 on success above
+        self.consecutive_failures = failures
         
         if not all_data:
             return None

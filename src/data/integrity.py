@@ -35,11 +35,15 @@ class IntegrityManager:
     def _load_hashes(self) -> pd.DataFrame:
         """Load existing hash records."""
         if self.hash_file.exists():
-            return pd.read_parquet(self.hash_file)
-        return pd.DataFrame(columns=[
-            'symbol', 'date', 'adj_hash', 'raw_hash', 'adj_factor_hash',
-            'timestamp'
-        ])
+            df = pd.read_parquet(self.hash_file)
+            # FIX B1: Set index for O(1) lookup instead of O(n) filter
+            if not df.empty:
+                df = df.set_index(['symbol', 'date'])
+            return df
+        # Return empty DataFrame with MultiIndex structure
+        return pd.DataFrame(
+            columns=['adj_hash', 'raw_hash', 'adj_factor_hash', 'timestamp']
+        ).set_index(pd.MultiIndex.from_arrays([[], []], names=['symbol', 'date']))
     
     def _compute_row_hash(self, row: pd.Series) -> Tuple[str, str, str]:
         """
@@ -151,16 +155,11 @@ class IntegrityManager:
             # Compute new hashes
             adj_hash, raw_hash, adj_factor_hash = self._compute_row_hash(row)
             
-            # Check against stored
-            stored = self.hashes[
-                (self.hashes['symbol'] == symbol) &
-                (self.hashes['date'] == date)
-            ]
-            
-            if stored.empty:
+            # FIX B1: Use index lookup O(1) instead of filter O(n)
+            try:
+                stored = self.hashes.loc[(symbol, date)]
+            except KeyError:
                 continue  # New data point
-            
-            stored = stored.iloc[0]
             
             # Check for drift in any hash
             if (stored['adj_hash'] != adj_hash or

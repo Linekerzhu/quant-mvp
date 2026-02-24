@@ -87,11 +87,19 @@ class DailyJob:
     
     def _step_ingest(self, trade_date: str):
         """Step 1: Data ingestion."""
-        # FIX B1: Use business day offset to handle weekends/holidays
-        prev_bday = (pd.Timestamp(trade_date) - BDay(1)).strftime('%Y-%m-%d')
-        try:
-            existing_data = read_parquet_safe(f"data/raw/daily_{prev_bday}.parquet")
-        except FileNotFoundError:
+        # FIX A2: Search for recent existing file (handles market holidays)
+        existing_data = None
+        for lookback in range(1, 5):  # Try up to 4 business days back
+            prev = (pd.Timestamp(trade_date) - BDay(lookback)).strftime('%Y-%m-%d')
+            path = f"data/raw/daily_{prev}.parquet"
+            try:
+                existing_data = read_parquet_safe(path)
+                logger.info("found_existing_data", {"date": prev, "lookback": lookback})
+                break
+            except FileNotFoundError:
+                continue
+        
+        if existing_data is None:
             logger.info("first_run_detected", {"trade_date": trade_date})
             existing_data = pd.DataFrame()  # Triggers get_sp500_tickers fallback
         

@@ -111,14 +111,18 @@ class IntegrityManager:
         new_hashes = pd.DataFrame(records)
         
         # Merge with existing hashes
-        self.hashes = pd.concat([self.hashes, new_hashes], ignore_index=True)
+        self.hashes = pd.concat([self.hashes.reset_index(), new_hashes], ignore_index=True)
         self.hashes = self.hashes.drop_duplicates(
             subset=['symbol', 'date'], keep='last'
         )
         
+        # FIX A1: Rebuild MultiIndex after concat/drop_duplicates
+        self.hashes = self.hashes.set_index(['symbol', 'date'])
+        
         # Save using WAP (O1 fix)
         from src.data.wap_utils import write_parquet_wap
-        write_parquet_wap(self.hashes, self.hash_file)
+        # Write with reset_index for parquet compatibility
+        write_parquet_wap(self.hashes.reset_index(), self.hash_file)
         
         logger.info("data_frozen", {"records": len(new_hashes)})
         

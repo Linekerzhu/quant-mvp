@@ -97,17 +97,21 @@ class FeatureEngineer:
         # Plan requirement: Mark rows with NaN features as invalid instead of filling with 0
         feature_cols = self._get_feature_columns(df)
         
-        # Create mask for rows with any NaN in features
+        # FIX A2: Detect both NaN and inf as invalid
         nan_mask = df[feature_cols].isna().any(axis=1)
-        df['features_valid'] = ~nan_mask
+        inf_mask = np.isinf(df[feature_cols]).any(axis=1)
+        invalid_mask = nan_mask | inf_mask
+        df['features_valid'] = ~invalid_mask
         
         # Log NaN statistics
         nan_count = nan_mask.sum()
-        if nan_count > 0:
-            logger.warn("features_with_nan_detected", {
+        inf_count = inf_mask.sum()
+        if nan_count > 0 or inf_count > 0:
+            logger.warn("features_with_invalid_detected", {
                 "nan_rows": int(nan_count),
+                "inf_rows": int(inf_count),
                 "total_rows": len(df),
-                "nan_pct": round(100 * nan_count / len(df), 2)
+                "invalid_pct": round(100 * (nan_count + inf_count) / len(df), 2)
             })
         
         # Keep NaN as NaN (don't fill with 0) - downstream will skip invalid rows

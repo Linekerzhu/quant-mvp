@@ -62,10 +62,10 @@ overfitting:
   deflated_sharpe_threshold: 0.0
   deflated_sharpe_min: 0.0  # Hard gate: cannot proceed if <= 0
   
-  # Dummy feature sentinel (Plan v4)
+  # Dummy feature sentinel (Plan v4 Patch 2)
   dummy_feature_sentinel:
     enabled: true
-    ranking_threshold: 0.50  # Reject if dummy in top 50%
+    ranking_threshold: 0.25  # P0-3 Fix: Reject if dummy in top 25% (was 0.50)
     relative_threshold: 1.0  # Reject if dummy_gain / median_real_gain > 1.0
 
 # Time scramble sentinel

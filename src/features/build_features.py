@@ -62,13 +62,23 @@ class FeatureEngineer:
         # Ensure sorted by symbol and date
         df = df.sort_values(['symbol', 'date'])
         
+        # Check if source provides reliable adj OHLC (Patch 1 compliance)
+        provides_adj_ohlc = df.get('source_provides_adj_ohlc', pd.Series([True] * len(df))).all()
+        
+        if not provides_adj_ohlc:
+            logger.warn("feature_degradation_ohlc_disabled", {
+                "reason": "backup_source_no_adj_ohlc",
+                "disabled_features": ["atr_14", "rsi_14", "macd_line", "macd_signal", "pv_correlation_5d"],
+                "retained_features": ["returns_*d", "rv_*d", "relative_volume_20d", "obv", "sma/ema_zscore", "market_breadth", "vix_change_5d", "pv_divergence_*"]
+            })
+        
         # Calculate features by category (using groupby for performance)
-        df = self._calc_momentum_features_fast(df)
-        df = self._calc_volatility_features_fast(df)
+        df = self._calc_momentum_features_fast(df, provides_adj_ohlc)
+        df = self._calc_volatility_features_fast(df, provides_adj_ohlc)
         df = self._calc_volume_features_fast(df)
         df = self._calc_mean_reversion_features_fast(df)
         df = self._calc_market_features(df)  # B14: VIX + market breadth
-        df = self._calc_divergence_features(df)  # B15: price-volume divergence
+        df = self._calc_divergence_features(df, provides_adj_ohlc)  # B15: price-volume divergence
         
         # Inject dummy noise feature (Plan v4)
         df = self._inject_dummy_noise(df)
@@ -253,11 +263,26 @@ class FeatureEngineer:
         return pd.Series(obv, index=df.index)
     
     def _get_feature_columns(self, df: pd.DataFrame) -> List[str]:
-        """Get list of feature columns (excluding metadata)."""
+        """Get list of feature columns (excluding metadata).
+        
+        P0-2 Fix: Expanded exclude list to prevent label leakage and PIT info leakage.
+        Uses defensive assertion to catch any label columns.
+        """
         exclude = ['symbol', 'date', 'raw_open', 'raw_high', 'raw_low', 'raw_close',
                    'adj_open', 'adj_high', 'adj_low', 'adj_close', 'volume',
                    'feature_version', 'detected_split', 'split_ratio', 'is_suspended',
-                   'suspension_start', 'can_trade']
+                   'suspension_start', 'can_trade',
+                   # P0-2: Additional exclusions for PIT and label leak prevention
+                   'ingestion_timestamp', 'source_provides_adj_ohlc',
+                   'features_valid',
+                   'label', 'label_barrier', 'label_return', 'label_holding_days', 
+                   'event_valid', 'sample_weight']
+        
+        # Defensive assertion: detect any label-related columns
+        label_cols = [col for col in df.columns if col.startswith('label')]
+        if label_cols:
+            raise ValueError(f"Label columns detected in feature extraction: {label_cols}. " 
+                           "This indicates data leakage. Ensure labels are not passed to build_features().")
         
         return [col for col in df.columns if col not in exclude]
     
@@ -273,7 +298,7 @@ class FeatureEngineer:
     
     # === Optimized GroupBy Methods (10-100x faster) ===
     
-    def _calc_momentum_features_fast(self, df: pd.DataFrame) -> pd.DataFrame:
+    def _calc_momentum_features_fast(self, df: pd.DataFrame, provides_adj_ohlc: bool = True) -> pd.DataFrame:
         """Calculate momentum features using groupby (optimized)."""
         # Log returns
         for window in [5, 10, 20, 60]:
@@ -281,27 +306,33 @@ class FeatureEngineer:
                 lambda x: np.log(x / x.shift(window))
             )
         
-        # RSI using groupby
-        df['rsi_14'] = df.groupby('symbol')['adj_close'].transform(
-            lambda x: self._calc_rsi(x, window=14)
-        )
-        
-        # MACD using groupby
-        macd_results = df.groupby('symbol')['adj_close'].apply(
-            lambda x: self._calc_macd(x)
-        )
-        df['macd_line'] = np.nan
-        df['macd_signal'] = np.nan
-        for symbol, (macd, signal) in macd_results.items():
-            mask = df['symbol'] == symbol
-            df.loc[mask, 'macd_line'] = macd.values
-            df.loc[mask, 'macd_signal'] = signal.values
+        if provides_adj_ohlc:
+            # RSI using groupby (requires reliable OHLC)
+            df['rsi_14'] = df.groupby('symbol')['adj_close'].transform(
+                lambda x: self._calc_rsi(x, window=14)
+            )
+            
+            # MACD using groupby
+            macd_results = df.groupby('symbol')['adj_close'].apply(
+                lambda x: self._calc_macd(x)
+            )
+            df['macd_line'] = np.nan
+            df['macd_signal'] = np.nan
+            for symbol, (macd, signal) in macd_results.items():
+                mask = df['symbol'] == symbol
+                df.loc[mask, 'macd_line'] = macd.values
+                df.loc[mask, 'macd_signal'] = signal.values
+        else:
+            # Set OHLC-dependent features to NaN when source doesn't provide reliable data
+            df['rsi_14'] = np.nan
+            df['macd_line'] = np.nan
+            df['macd_signal'] = np.nan
         
         return df
     
-    def _calc_volatility_features_fast(self, df: pd.DataFrame) -> pd.DataFrame:
+    def _calc_volatility_features_fast(self, df: pd.DataFrame, provides_adj_ohlc: bool = True) -> pd.DataFrame:
         """Calculate volatility features using groupby (optimized)."""
-        # Realized volatility
+        # Realized volatility (only needs adj_close)
         for window in [5, 20, 60]:
             df[f'rv_{window}d'] = df.groupby('symbol')['adj_close'].transform(
                 lambda x: (
@@ -311,13 +342,17 @@ class FeatureEngineer:
                 )
             )
         
-        # ATR per symbol (explicit loop — groupby.apply unreliable across pandas versions)
-        atr_parts = []
-        for symbol, group in df.groupby('symbol'):
-            atr = self._calc_atr(group.reset_index(drop=True), window=14)
-            atr.index = group.index
-            atr_parts.append(atr)
-        df['atr_14'] = pd.concat(atr_parts)
+        if provides_adj_ohlc:
+            # ATR per symbol (requires OHLC - explicit loop for pandas 2.x compatibility)
+            atr_parts = []
+            for symbol, group in df.groupby('symbol'):
+                atr = self._calc_atr(group.reset_index(drop=True), window=14)
+                atr.index = group.index
+                atr_parts.append(atr)
+            df['atr_14'] = pd.concat(atr_parts)
+        else:
+            # ATR requires OHLC, set to NaN when unavailable
+            df['atr_14'] = np.nan
         
         return df
     
@@ -405,7 +440,7 @@ class FeatureEngineer:
         
         return df
     
-    def _calc_divergence_features(self, df: pd.DataFrame) -> pd.DataFrame:
+    def _calc_divergence_features(self, df: pd.DataFrame, provides_adj_ohlc: bool = True) -> pd.DataFrame:
         """
         Calculate price-volume divergence features (B15).
         
@@ -413,7 +448,7 @@ class FeatureEngineer:
         - Price rising but volume declining (weak trend)
         - Price falling but volume declining (weak decline)
         """
-        # Price trend (5-day slope)
+        # Price trend (5-day slope) - uses adj_close only
         df['price_trend_5d'] = df.groupby('symbol')['adj_close'].transform(
             lambda x: (x - x.shift(5)) / x.shift(5).replace(0, np.nan)
         )
@@ -431,14 +466,18 @@ class FeatureEngineer:
         df['pv_divergence_bear'] = ((df['price_trend_5d'] < 0) & 
                                      (df['volume_trend_5d'] < 0)).astype(int)
         
-        # Continuous divergence score (explicit loop — groupby.apply unreliable)
-        corr_parts = []
-        for symbol, group in df.groupby('symbol'):
-            corr = group['price_trend_5d'].rolling(5, min_periods=3).corr(
-                group['volume_trend_5d']
-            )
-            corr_parts.append(corr)
-        df['pv_correlation_5d'] = pd.concat(corr_parts)
+        if provides_adj_ohlc:
+            # Continuous divergence score (requires more reliable data)
+            corr_parts = []
+            for symbol, group in df.groupby('symbol'):
+                corr = group['price_trend_5d'].rolling(5, min_periods=3).corr(
+                    group['volume_trend_5d']
+                )
+                corr_parts.append(corr)
+            df['pv_correlation_5d'] = pd.concat(corr_parts)
+        else:
+            # Disable correlation feature when OHLC unreliable
+            df['pv_correlation_5d'] = np.nan
         
         # Clean up temp columns
         df = df.drop(columns=['price_trend_5d', 'volume_trend_5d'])

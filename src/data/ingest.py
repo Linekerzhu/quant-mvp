@@ -138,12 +138,15 @@ class YFinanceSource(DataSource):
                 
                 merged['symbol'] = symbol
                 
+                # Mark that yfinance provides full adj OHLC
+                merged['source_provides_adj_ohlc'] = True
+                
                 # A24: Add ingestion timestamp for PIT tracking
                 merged['ingestion_timestamp'] = pd.Timestamp.now()
                 
                 all_data.append(merged[['symbol', 'date', 'raw_open', 'raw_high', 'raw_low', 
                                       'raw_close', 'adj_open', 'adj_high', 'adj_low', 
-                                      'adj_close', 'volume', 'ingestion_timestamp']])
+                                      'adj_close', 'volume', 'ingestion_timestamp', 'source_provides_adj_ohlc']])
                 
                 logger.info("data_fetch_success", {
                     "symbol": symbol, 
@@ -264,12 +267,14 @@ class TiingoSource(DataSource):
                 # Parse date
                 df['date'] = pd.to_datetime(df['date']).dt.tz_localize(None)
                 
-                # Tiingo provides adjClose but not full adj OHLC
-                # We approximate adj_open/high/low using the adjClose/close ratio
-                adj_ratio = df['adj_close'] / df['raw_close']
-                df['adj_open'] = df['raw_open'] * adj_ratio
-                df['adj_high'] = df['raw_high'] * adj_ratio
-                df['adj_low'] = df['raw_low'] * adj_ratio
+                # Tiingo provides adjClose but not full adj OHLC (Patch 1 compliance)
+                # DO NOT approximate adj_open/high/low - set to NaN to disable OHLC features
+                df['adj_open'] = np.nan
+                df['adj_high'] = np.nan
+                df['adj_low'] = np.nan
+                
+                # Mark that this source doesn't provide reliable adj OHLC
+                df['source_provides_adj_ohlc'] = False
                 
                 df['symbol'] = symbol
                 
@@ -279,7 +284,7 @@ class TiingoSource(DataSource):
                 # Select columns to match yfinance format
                 df = df[['symbol', 'date', 'raw_open', 'raw_high', 'raw_low', 
                         'raw_close', 'adj_open', 'adj_high', 'adj_low', 
-                        'adj_close', 'volume', 'ingestion_timestamp']]
+                        'adj_close', 'volume', 'ingestion_timestamp', 'source_provides_adj_ohlc']]
                 
                 all_data.append(df)
                 

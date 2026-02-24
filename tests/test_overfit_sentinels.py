@@ -130,8 +130,9 @@ class TimeShuffleSentinel:
     
     # Thresholds from Plan v4 Patch 3
     N_SHUFFLES = 5
-    MEAN_ACCURACY_THRESHOLD = 0.55  # Mean accuracy across shuffles must be < 0.55
-    MAX_ACCURACY_THRESHOLD = 0.58  # No single shuffle can exceed 0.58
+    # P0-4 Fix: Using AUC instead of accuracy for class imbalance robustness
+    MEAN_AUC_THRESHOLD = 0.55  # Mean AUC across shuffles must be <= 0.55
+    MAX_AUC_THRESHOLD = 0.58   # No single shuffle can exceed 0.58
     
     def __init__(self, n_shuffles: int = 5):
         self.n_shuffles = n_shuffles
@@ -166,8 +167,12 @@ class TimeShuffleSentinel:
                 n_jobs=-1
             )
         
+        # P0-4 Fix: Use roc_auc scoring instead of accuracy
+        # AUC is robust to class imbalance, accuracy is not
+        scoring = 'roc_auc' if len(np.unique(y)) == 2 else 'roc_auc_ovr'
+        
         # Baseline score (no shuffle)
-        baseline_scores = cross_val_score(model, X, y, cv=cv_folds, scoring='accuracy')
+        baseline_scores = cross_val_score(model, X, y, cv=cv_folds, scoring=scoring)
         baseline_mean = baseline_scores.mean()
         
         # Run multiple shuffles
@@ -186,7 +191,7 @@ class TimeShuffleSentinel:
             
             # Evaluate on shuffled data
             scores = cross_val_score(
-                model, X_shuffled, y_shuffled, cv=cv_folds, scoring='accuracy'
+                model, X_shuffled, y_shuffled, cv=cv_folds, scoring=scoring
             )
             shuffle_scores.append(scores.mean())
         
@@ -196,17 +201,18 @@ class TimeShuffleSentinel:
         mean_shuffle = shuffle_scores.mean()
         max_shuffle = shuffle_scores.max()
         
-        # Pass if mean < threshold AND max < threshold
-        passed = (mean_shuffle < self.MEAN_ACCURACY_THRESHOLD) and (max_shuffle < self.MAX_ACCURACY_THRESHOLD)
+        # Pass if mean <= threshold AND max <= threshold (per Plan)
+        passed = (mean_shuffle <= self.MEAN_AUC_THRESHOLD) and (max_shuffle <= self.MAX_AUC_THRESHOLD)
         
         self.results = {
-            'baseline_accuracy': float(baseline_mean),
-            'shuffle_accuracies': shuffle_scores.tolist(),
-            'shuffle_mean': float(mean_shuffle),
-            'shuffle_std': float(shuffle_scores.std()),
-            'shuffle_max': float(max_shuffle),
+            'baseline_auc': float(baseline_mean),
+            'shuffle_aucs': shuffle_scores.tolist(),
+            'shuffle_mean_auc': float(mean_shuffle),
+            'shuffle_std_auc': float(shuffle_scores.std()),
+            'shuffle_max_auc': float(max_shuffle),
             'passed': passed,
-            'n_shuffles': self.n_shuffles
+            'n_shuffles': self.n_shuffles,
+            'scoring': scoring
         }
         
         return passed, self.results

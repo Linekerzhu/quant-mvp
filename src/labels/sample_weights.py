@@ -115,41 +115,50 @@ class SampleWeightCalculator:
         # Build a timeline of all entry and exit dates
         # This allows us to use binary search for overlap detection
         
-        # FIX B3: Store paired intervals instead of separate entry/exit lists
-        symbol_intervals_sorted = {}
+        # FIX A1: AFML uniqueness weighting - count concurrent events per day
+        # For each event, calculate average 1/(concurrent_events) over its lifetime
+        # This is the correct AFML algorithm (not "how many symbols overlap")
         
-        for symbol, intervals in symbol_intervals.items():
-            # Sort by entry date, keeping entry-exit pairing
-            symbol_intervals_sorted[symbol] = sorted(intervals, key=lambda x: x[0])
+        # Build daily event count timeline
+        # For each trading day, count how many events are active
+        from pandas.tseries.offsets import BDay
         
-        # For each event, count overlapping symbols
+        # Get all trading days in the dataset
+        all_dates = pd.DatetimeIndex(sorted(set(
+            pd.date_range(valid_df['date'].min(), 
+                         valid_df['date'].max() + BDay(int(valid_df['label_holding_days'].max())), 
+                         freq='B')
+        )))
+        
+        # For each date, count active events
+        daily_event_count = pd.Series(0, index=all_dates)
+        
         for idx, row in valid_df.iterrows():
-            symbol = row['symbol']
             entry_date = row['date']
             holding_days = int(row['label_holding_days'])
-            exit_date = entry_date + BusinessDay(holding_days)
+            exit_date = entry_date + BDay(holding_days)
             
-            # Count how many OTHER symbols have any event in [entry_date, exit_date)
-            overlapping_symbols = 0
+            # Increment count for each day this event is active
+            active_days = pd.date_range(entry_date, exit_date, freq='B', inclusive='left')
+            daily_event_count[active_days] += 1
+        
+        # Calculate uniqueness for each event
+        for idx, row in valid_df.iterrows():
+            entry_date = row['date']
+            holding_days = int(row['label_holding_days'])
+            exit_date = entry_date + BDay(holding_days)
             
-            for other_symbol in symbol_intervals_sorted:
-                if other_symbol == symbol:
-                    continue
-                
-                # Check if other_symbol has ANY event overlapping [entry_date, exit_date)
-                # Using binary search: O(log m) per symbol where m = events per symbol
-                # FIX B3: Pass paired intervals instead of separate lists
-                if self._has_overlap_binary_search(
-                    symbol_intervals_sorted[other_symbol],
-                    entry_date,
-                    exit_date
-                ):
-                    overlapping_symbols += 1
+            # Get active days for this event
+            active_days = pd.date_range(entry_date, exit_date, freq='B', inclusive='left')
             
-            # Weight = 1 / (1 + overlapping symbols)
-            concurrent_count = 1 + overlapping_symbols
-            weight = 1.0 / max(concurrent_count, 1)
-            weights.loc[idx] = weight
+            # Uniqueness = mean(1 / concurrent_count) over event lifetime
+            if len(active_days) > 0:
+                concurrent_counts = daily_event_count[active_days]
+                uniqueness = (1.0 / concurrent_counts).mean()
+            else:
+                uniqueness = 1.0
+            
+            weights.loc[idx] = uniqueness
         
         return weights
     

@@ -44,9 +44,10 @@ position:
   
   # Drawdown scaling
   drawdown_scaling:
-    threshold: 0.05  # Start scaling at 5% drawdown
-    floor: 0.25      # Minimum 25% of original position
-    linear: true     # Linear reduction from threshold to floor
+    threshold: 0.05   # Start scaling at 5% drawdown
+    ceiling: 0.10     # Position reaches floor at 10% drawdown (matches risk_limits warning)
+    floor: 0.25       # Minimum 25% of original position
+    linear: true      # Linear reduction from threshold to ceiling
 
 # Portfolio constraints
 portfolio:

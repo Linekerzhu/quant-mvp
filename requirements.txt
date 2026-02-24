@@ -14,6 +14,10 @@ requests-cache>=1.1.0
 
 # Feature engineering
 ta-lib>=0.4.28
+scipy>=1.11.0
+
+# Web scraping (for universe data)
+beautifulsoup4>=4.12.0
 
 # Modeling
 lightgbm>=4.1.0

@@ -244,7 +244,8 @@ class FeatureEngineer:
         rs = gain / loss.replace(0, np.nan)
         rsi = 100 - (100 / (1 + rs))
         
-        return rsi.fillna(50)  # Neutral for initial values
+        # FIX B3: Remove fillna - let features_valid handle warmup period NaN
+        return rsi  # Keep NaN for initial values
     
     def _calc_macd(self, prices: pd.Series) -> Tuple[pd.Series, pd.Series]:
         """Calculate MACD line and signal."""

@@ -86,9 +86,13 @@ class DailyJob:
     
     def _step_ingest(self, trade_date: str):
         """Step 1: Data ingestion."""
-        # FIX C3: Load existing data or use S&P 500 list for universe building
+        # FIX A2: Handle first run (no previous data file)
         prev_date = (pd.Timestamp(trade_date) - timedelta(days=1)).strftime('%Y-%m-%d')
-        existing_data = read_parquet_safe(f"data/raw/daily_{prev_date}.parquet")
+        try:
+            existing_data = read_parquet_safe(f"data/raw/daily_{prev_date}.parquet")
+        except FileNotFoundError:
+            logger.info("first_run_detected", {"trade_date": trade_date})
+            existing_data = pd.DataFrame()  # Triggers get_sp500_tickers fallback
         
         # Get universe symbols (uses existing data or falls back to S&P 500 list)
         universe_info = self.universe.build_universe(existing_data)

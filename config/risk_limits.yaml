@@ -55,8 +55,11 @@ system_level:
   auto_degrade:
     enabled: true
     triggers:
-      - consecutive_daily_sharpe_low  # 5 days daily Sharpe < -1
-      - drawdown_threshold  # 8% drawdown
+      consecutive_sharpe:
+        threshold: -1.0  # Daily Sharpe < -1
+        consecutive_days: 5
+      drawdown:
+        threshold: 0.08  # 8% drawdown
     
 # PDT Guard
 pdt_guard:

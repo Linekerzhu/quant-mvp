@@ -41,11 +41,18 @@ catboost:
 # Cross-validation
 validation:
   # Combinatorial Purged Cross-Validation
+  # CRITICAL FIX A1: n_splits reduced from 10 to 6 to ensure fold_size > gap
+  # Math: 2yr data = 504 days, fold_size = 504/6 = 84d > gap (purge+embargo = 70d)
+  # Previous n_splits=10 gave fold_size=50d < 70d gap, causing excessive data purge
   cpcv:
-    n_splits: 10
+    n_splits: 6
     n_test_splits: 2
     purge_window: 10  # days
     embargo_window: 60  # days
+    # Minimum data length formula (per plan §6.5):
+    # min_days = n_splits * (purge + embargo) / (n_splits - n_test_splits)
+    #          = 6 * 70 / 4 = 105 days per test fold pair
+    min_data_days: 252  # Require at least 1 year of data for CPCV
   
   # Walk-Forward validation
   walk_forward:

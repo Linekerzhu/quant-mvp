@@ -412,6 +412,14 @@ embargo_window = max(feature_lookback, execution_delay, corporate_action_latency
 
 **当前取值**：`purge = 10 日, embargo = max(60, 1, 0) = 60 日`。
 
+**CPCV 数据长度警告**（R5 A1 修复）：
+> 最小数据长度公式：`min_days = n_splits × (purge + embargo) / (n_splits - n_test_splits)`
+> 
+> 示例（n_splits=6, n_test=2, gap=70d）：`min_days = 6 × 70 / 4 = 105d` per test fold pair
+> 
+> 原配置（n_splits=10）在 2 年数据（504d）下 fold_size=50d < gap=70d，导致 139% 数据被清洗，训练不足。
+> **已修复**：training.yaml 中 n_splits 从 10 降至 6，确保 fold_size=84d > gap=70d。
+
 > 此公式预留了 `corporate_action_latency` 接口。若未来引入非 PIT 的公司行为数据，只需调整此参数而非重构逻辑。
 
 ---

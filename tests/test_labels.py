@@ -83,7 +83,11 @@ class TestTripleBarrierLogic:
     """Test Triple Barrier internal logic."""
     
     def test_profit_barrier_hit(self):
-        """Test profit barrier detection."""
+        """Test profit barrier detection.
+        
+        FIX A1: Remove conditional assertion, add label value check.
+        Mutation testing showed label sign could be flipped without test failure.
+        """
         labeler = TripleBarrierLabeler()
         
         # Create synthetic data with clear profit
@@ -101,12 +105,20 @@ class TestTripleBarrierLogic:
         
         result = labeler.label_events(df)
         
-        # First event should hit profit barrier
-        if result['event_valid'].iloc[0]:
-            assert result['label_barrier'].iloc[0] == 'profit'
+        # FIX A1/B2: Assert event is valid (no conditional)
+        assert result['event_valid'].iloc[0], "Expected valid event for profit test"
+        
+        # FIX A1: Verify both barrier type AND label value
+        assert result['label_barrier'].iloc[0] == 'profit', "Should hit profit barrier"
+        assert result['label'].iloc[0] == 1, "Profit should have label=1"  # Mutation killer
+        assert result['label_return'].iloc[0] > 0, "Profit should have positive return"
     
     def test_loss_barrier_hit(self):
-        """Test loss barrier detection."""
+        """Test loss barrier detection.
+        
+        FIX A1: Remove conditional assertion, add label value check.
+        Mutation testing showed label sign could be flipped without test failure.
+        """
         labeler = TripleBarrierLabeler()
         
         # Create synthetic data with clear loss
@@ -124,9 +136,13 @@ class TestTripleBarrierLogic:
         
         result = labeler.label_events(df)
         
-        # First event should hit loss barrier
-        if result['event_valid'].iloc[0]:
-            assert result['label_barrier'].iloc[0] == 'loss'
+        # FIX A1/B2: Assert event is valid (no conditional)
+        assert result['event_valid'].iloc[0], "Expected valid event for loss test"
+        
+        # FIX A1: Verify both barrier type AND label value
+        assert result['label_barrier'].iloc[0] == 'loss', "Should hit loss barrier"
+        assert result['label'].iloc[0] == -1, "Loss should have label=-1"  # Mutation killer
+        assert result['label_return'].iloc[0] < 0, "Loss should have negative return"
 
 
 class TestNonOverlappingConstraint:

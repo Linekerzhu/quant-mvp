@@ -95,11 +95,25 @@ class FeatureEngineer:
         
         # Handle NaN values in features
         # Plan requirement: Mark rows with NaN features as invalid instead of filling with 0
-        feature_cols = self._get_feature_columns(df)
         
-        # FIX A2: Detect both NaN and inf as invalid
-        nan_mask = df[feature_cols].isna().any(axis=1)
-        inf_mask = np.isinf(df[feature_cols]).any(axis=1)
+        # FIX A2: Source-aware features_valid calculation
+        # When source lacks AdjOHLC, only check features that don't depend on OHLC
+        if not provides_adj_ohlc:
+            # Backup source (Tiingo): only check AdjClose-based features
+            feature_cols_to_check = [c for c in feature_cols 
+                                     if c not in ['rsi_14', 'macd_line', 'macd_signal', 
+                                                  'atr_20', 'pv_correlation_5d', 
+                                                  'regime_trend', 'regime_trend_score', 'adx_14']]
+            logger.info("features_valid_backup_source", {
+                "checked_features": len(feature_cols_to_check),
+                "excluded_ohlc_features": 7
+            })
+        else:
+            feature_cols_to_check = feature_cols
+        
+        # FIX A2: Detect both NaN and inf as invalid (only for checked features)
+        nan_mask = df[feature_cols_to_check].isna().any(axis=1)
+        inf_mask = np.isinf(df[feature_cols_to_check]).any(axis=1)
         invalid_mask = nan_mask | inf_mask
         df['features_valid'] = ~invalid_mask
         

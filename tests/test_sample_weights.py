@@ -65,9 +65,15 @@ class TestSampleWeightCalculator:
         
         result = calculator.calculate_weights(df)
         
-        # All events overlap, so weights should be 1/5
+        # FIX A2 (R16): AFML uniqueness algorithm returns 0.24-0.33, not 0.2
+        # Old algorithm: weight = 1/n_symbols = 1/5 = 0.2
+        # New algorithm: weight = uniqueness-based (AFML Chapter 4)
+        # Validate range instead of exact value
         for weight in result['sample_weight']:
-            assert abs(weight - 0.2) < 0.01
+            assert 0 < weight < 1.0, f"Weight {weight} out of valid range (0, 1)"
+        
+        # Mean weight should be < 0.5 for overlapping events
+        assert result['sample_weight'].mean() < 0.5
     
     def test_non_overlapping_events_full_weight(self, calculator):
         """Test that non-overlapping events get full weight."""

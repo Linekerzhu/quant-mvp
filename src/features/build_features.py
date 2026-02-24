@@ -96,6 +96,9 @@ class FeatureEngineer:
         # Handle NaN values in features
         # Plan requirement: Mark rows with NaN features as invalid instead of filling with 0
         
+        # FIX A1 (R16): Get feature columns before using them
+        feature_cols = self._get_feature_columns(df)
+        
         # FIX A2: Source-aware features_valid calculation
         # When source lacks AdjOHLC, only check features that don't depend on OHLC
         if not provides_adj_ohlc:

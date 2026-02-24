@@ -52,20 +52,27 @@ class IntegrityManager:
         Returns:
             (adj_hash, raw_hash, adj_factor_hash)
         """
+        # FIX A2: Round floats to 8 decimal places before hashing
+        # Prevents false drift detection from ~1e-14 float representation variations
+        def round_float(val):
+            if isinstance(val, float):
+                return round(val, 8)
+            return val
+        
         # Adjusted price fields
         adj_data = {
-            'adj_open': row.get('adj_open'),
-            'adj_high': row.get('adj_high'),
-            'adj_low': row.get('adj_low'),
-            'adj_close': row.get('adj_close'),
-            'volume': row.get('volume')
+            'adj_open': round_float(row.get('adj_open')),
+            'adj_high': round_float(row.get('adj_high')),
+            'adj_low': round_float(row.get('adj_low')),
+            'adj_close': round_float(row.get('adj_close')),
+            'volume': row.get('volume')  # Int, no rounding needed
         }
         adj_hash = hashlib.sha256(
             json.dumps(adj_data, sort_keys=True, default=str).encode()
         ).hexdigest()[:16]
         
         # Raw close
-        raw_data = {'raw_close': row.get('raw_close')}
+        raw_data = {'raw_close': round_float(row.get('raw_close'))}
         raw_hash = hashlib.sha256(
             json.dumps(raw_data, sort_keys=True, default=str).encode()
         ).hexdigest()[:16]

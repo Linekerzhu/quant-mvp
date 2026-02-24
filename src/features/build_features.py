@@ -10,6 +10,7 @@ from typing import Dict, List, Optional, Tuple
 import yaml
 
 from src.ops.event_logger import get_logger
+from src.features.regime_detector import RegimeDetector
 
 logger = get_logger()
 
@@ -79,6 +80,9 @@ class FeatureEngineer:
         df = self._calc_mean_reversion_features_fast(df)
         df = self._calc_market_features(df)  # B14: VIX + market breadth
         df = self._calc_divergence_features(df, provides_adj_ohlc)  # B15: price-volume divergence
+        
+        # FIX B1: Add RegimeDetector features (regime_volatility, regime_trend)
+        df = RegimeDetector().detect_regime(df)
         
         # Inject dummy noise feature (Plan v4)
         df = self._inject_dummy_noise(df)

@@ -44,7 +44,8 @@ class CorporateActionsHandler:
         
         for symbol in df['symbol'].unique():
             mask = df['symbol'] == symbol
-            symbol_df = df.loc[mask].sort_values('date')
+            # CRITICAL FIX A1: Reset index to ensure positional indexing works correctly
+            symbol_df = df.loc[mask].sort_values('date').reset_index(drop=True)
             
             if len(symbol_df) < 2:
                 continue
@@ -66,8 +67,9 @@ class CorporateActionsHandler:
                     # Calculate split ratio
                     idx = symbol_df[symbol_df['date'] == split_date].index[0]
                     if idx > 0:
-                        prev_raw = symbol_df.loc[idx - 1, 'raw_close']
-                        curr_raw = symbol_df.loc[idx, 'raw_close']
+                        # Use iloc for positional indexing (safe after reset_index)
+                        prev_raw = symbol_df.iloc[idx - 1]['raw_close']
+                        curr_raw = symbol_df.iloc[idx]['raw_close']
                         
                         if curr_raw != 0:
                             ratio = prev_raw / curr_raw
@@ -188,7 +190,8 @@ class CorporateActionsHandler:
         
         for symbol in df['symbol'].unique():
             mask = df['symbol'] == symbol
-            symbol_df = df.loc[mask].sort_values('date')
+            # CRITICAL FIX A2: Reset index to prevent cross-symbol contamination
+            symbol_df = df.loc[mask].sort_values('date').reset_index(drop=True)
             
             # Find NaN runs
             is_nan = symbol_df['raw_close'].isna()
@@ -219,10 +222,17 @@ class CorporateActionsHandler:
                 days = symbol_df.loc[start:end_idx].shape[0]
                 
                 if days >= min_consecutive:
-                    # Mark suspension period
-                    df.loc[start:end_idx, 'is_suspended'] = True
-                    df.loc[start:end_idx, 'suspension_start'] = symbol_df.loc[start, 'date']
-                    df.loc[start:end_idx, 'can_trade'] = False
+                    # CRITICAL FIX A2: Get actual indices from symbol_df, then map back to original df
+                    suspension_mask = symbol_df.index.isin(symbol_df.loc[start:end_idx].index)
+                    suspension_indices = symbol_df.loc[suspension_mask].index
+                    
+                    # Map back to original df using symbol + date for safety
+                    suspension_dates = symbol_df.loc[suspension_indices, 'date'].tolist()
+                    original_mask = (df['symbol'] == symbol) & (df['date'].isin(suspension_dates))
+                    
+                    df.loc[original_mask, 'is_suspended'] = True
+                    df.loc[original_mask, 'suspension_start'] = symbol_df.loc[start, 'date']
+                    df.loc[original_mask, 'can_trade'] = False
                     
                     logger.warn("suspension_marked", {
                         "symbol": symbol,
@@ -243,7 +253,10 @@ class CorporateActionsHandler:
                     post_suspension = symbol_df.iloc[resume_idx:resume_idx + resume_min_days]
                     
                     if len(post_suspension) > 0:
-                        df.loc[post_suspension.index, 'can_trade'] = False
+                        # CRITICAL FIX A2: Map back to original df using symbol + date
+                        cold_start_dates = post_suspension['date'].tolist()
+                        original_cold_mask = (df['symbol'] == symbol) & (df['date'].isin(cold_start_dates))
+                        df.loc[original_cold_mask, 'can_trade'] = False
         
         return df
     

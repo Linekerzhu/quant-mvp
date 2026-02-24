@@ -89,7 +89,7 @@ class DataValidator:
         
         Logic:
         - Single day NaN: Forward fill
-        - 2-3 consecutive NaN: Forward fill (within limit)
+        - 1-2 consecutive NaN: Forward fill (within limit)
         - >= max_consecutive_nan consecutive NaN: Mark as suspension (don't fill)
         """
         df = df.sort_values(['symbol', 'date']).copy()

@@ -424,12 +424,13 @@ class DualSourceIngest:
         data = source.fetch(symbols, start, end)
         
         if data is not None and not data.empty:
-            # Check if we need to log feature degradation (backup without AdjOHLC)
+            # FIX B2: Correct log content per Patch 1
             if source_name == "backup" and not source.provides_adj_ohlc:
                 logger.warn("feature_degradation", {
                     "reason": "backup_source_no_adj_ohlc",
-                    "disabled_features": ["returns_*d", "rsi_14", "macd_*"],
-                    "action": "using_approximated_adj_prices"
+                    "disabled_features": ["atr_14", "rsi_14", "macd_line", "macd_signal", "pv_correlation_5d"],
+                    "retained_features": ["returns_*d", "rv_*d", "relative_volume_20d", "obv", "sma/ema_zscore"],
+                    "action": "ohlc_features_disabled_per_patch1"
                 })
             
             logger.info("ingest_success", {

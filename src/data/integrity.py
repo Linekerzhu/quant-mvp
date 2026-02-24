@@ -255,24 +255,9 @@ class IntegrityManager:
         """
         snapshot_path = self.snapshot_dir / f"data_{version}.parquet"
         
-        # Write-Audit-Publish pattern (Plan v4 patch)
-        temp_path = snapshot_path.with_suffix('.tmp')
-        
-        # Write
-        df.to_parquet(temp_path, index=False)
-        
-        # Audit
-        try:
-            audit_df = pd.read_parquet(temp_path)
-            assert len(audit_df) == len(df), "Row count mismatch"
-            assert list(audit_df.columns) == list(df.columns), "Column mismatch"
-        except Exception as e:
-            temp_path.unlink(missing_ok=True)
-            logger.error("snapshot_audit_failed", {"error": str(e)})
-            raise
-        
-        # Publish (atomic rename)
-        temp_path.rename(snapshot_path)
+        # P1-2 Fix: Use centralized WAP utility
+        from src.data.wap_utils import write_parquet_wap
+        write_parquet_wap(df, snapshot_path)
         
         logger.info("snapshot_created", {"version": version, "path": str(snapshot_path)})
         

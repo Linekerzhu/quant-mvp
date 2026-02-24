@@ -15,6 +15,12 @@ from requests.adapters import HTTPAdapter
 from requests.packages.urllib3.util.retry import Retry
 import requests
 
+try:
+    import requests_cache
+    REQUESTS_CACHE_AVAILABLE = True
+except ImportError:
+    REQUESTS_CACHE_AVAILABLE = False
+
 from src.ops.event_logger import get_logger, EventLevel
 
 logger = get_logger()
@@ -47,9 +53,22 @@ class YFinanceSource(DataSource):
         self.consecutive_failures = 0
         self.max_failures_before_failover = 3
     
-    def _create_session(self):
-        """Create session with retry logic."""
-        session = requests.Session()
+    def _create_session(self, use_cache: bool = False):
+        """
+        Create session with retry logic.
+        
+        P1-3: Supports requests-cache for development/debugging.
+        """
+        # P1-3: Use CachedSession if available and enabled
+        if use_cache and REQUESTS_CACHE_AVAILABLE:
+            session = requests_cache.CachedSession(
+                cache_name='data/cache/yfinance_cache',
+                backend='sqlite',
+                expire_after=3600  # 1 hour cache
+            )
+            logger.info("using_cached_session", {"cache": "sqlite"})
+        else:
+            session = requests.Session()
         
         # Exponential backoff retry (Plan v4 patch)
         retry = Retry(
@@ -231,8 +250,8 @@ class TiingoSource(DataSource):
         
         for symbol in symbols:
             try:
-                # Rate limiting
-                time.sleep(0.1)
+                # P1-5 Fix: Rate limiting 0.1s → 0.5s (Patch 7 compliance)
+                time.sleep(0.5)
                 
                 url = f"{self.BASE_URL}/{symbol}/prices"
                 params = {

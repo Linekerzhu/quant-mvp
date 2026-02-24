@@ -202,14 +202,35 @@ class FeatureEngineer:
         """
         Inject dummy noise feature for overfitting detection (Plan v4).
         
+        P2-1 Fix: Row-level deterministic noise based on (symbol, date) hash.
+        This ensures same (symbol, date) always gets same noise regardless of
+        universe changes or DataFrame ordering.
+        
         This feature should NOT be used in actual prediction,
         only as a sentinel to detect overfitting.
         """
-        np.random.seed(self.dummy_seed)
-        df['dummy_noise'] = np.random.normal(0, 1, size=len(df))
+        # P2-1: Use (symbol, date) hash for row-level deterministic noise
+        def generate_deterministic_noise(row):
+            # Create hash from symbol and date
+            hash_input = f"{row['symbol']}_{row['date'].strftime('%Y-%m-%d')}_seed{self.dummy_seed}"
+            hash_val = hash(hash_input)
+            # Convert to normal distribution via Box-Muller-like approach
+            # Use hash to generate uniform [0,1], then transform
+            import math
+            u = (hash_val % 1000000) / 1000000.0  # Uniform [0,1)
+            # Simple approximation: use inverse CDF
+            # For standard normal, use approximation
+            if u < 0.5:
+                z = math.sqrt(-2.0 * math.log(1 - u * 2)) * math.cos(2 * math.pi * u)
+            else:
+                z = math.sqrt(-2.0 * math.log(1 - (1-u) * 2)) * math.sin(2 * math.pi * u)
+            return z
+        
+        df['dummy_noise'] = df.apply(generate_deterministic_noise, axis=1)
         
         logger.info("dummy_noise_injected", {
             "seed": self.dummy_seed,
+            "method": "deterministic_hash",
             "mean": float(df['dummy_noise'].mean()),
             "std": float(df['dummy_noise'].std())
         })

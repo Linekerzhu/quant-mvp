@@ -126,3 +126,116 @@ class TestTripleBarrierLogic:
         # First event should hit loss barrier
         if result['event_valid'].iloc[0]:
             assert result['label_barrier'].iloc[0] == 'loss'
+
+
+class TestNonOverlappingConstraint:
+    """Test Phase B §6.5: Non-overlapping event constraint (P1-1)."""
+    
+    def test_no_overlapping_events_per_symbol(self):
+        """
+        Test that same symbol cannot have overlapping events.
+        
+        When an event is active (entry to exit), no new event should
+        be triggered for the same symbol.
+        """
+        labeler = TripleBarrierLabeler()
+        
+        # Create data where price stays flat - events will hit time barrier
+        dates = pd.date_range('2024-01-01', periods=30, freq='B')
+        df = pd.DataFrame({
+            'symbol': 'TEST',
+            'date': dates,
+            'adj_open': [100] * 30,
+            'adj_high': [101] * 30,
+            'adj_low': [99] * 30,
+            'adj_close': [100] * 30,
+            'atr_14': [1.0] * 30,  # Small ATR
+            'can_trade': [True] * 30
+        })
+        
+        result = labeler.label_events(df)
+        
+        # Get valid events
+        valid_events = result[result['event_valid'] == True]
+        
+        # Check that events don't overlap
+        if len(valid_events) > 1:
+            for i in range(len(valid_events) - 1):
+                exit_date_i = valid_events.iloc[i]['date'] + pd.Timedelta(
+                    days=int(valid_events.iloc[i]['label_holding_days'])
+                )
+                entry_date_next = valid_events.iloc[i + 1]['date']
+                
+                # Next event should start after current event exits
+                assert entry_date_next > exit_date_i, \
+                    f"Events overlap: event {i} exits {exit_date_i}, next starts {entry_date_next}"
+    
+    def test_overlapping_events_rejected(self):
+        """
+        Test that overlapping events are explicitly rejected.
+        
+        With 10-day holding period, we should see ~3 events in 30 days
+        (not 30 events), demonstrating the overlap constraint.
+        """
+        labeler = TripleBarrierLabeler()
+        
+        dates = pd.date_range('2024-01-01', periods=30, freq='B')
+        df = pd.DataFrame({
+            'symbol': 'TEST',
+            'date': dates,
+            'adj_open': [100] * 30,
+            'adj_high': [101] * 30,
+            'adj_low': [99] * 30,
+            'adj_close': [100] * 30,
+            'atr_14': [1.0] * 30,
+            'can_trade': [True] * 30
+        })
+        
+        result = labeler.label_events(df)
+        valid_count = result['event_valid'].sum()
+        
+        # With 10-day holding and non-overlap constraint:
+        # Max ~3 events in 30 days
+        assert valid_count <= 3, \
+            f"Expected <= 3 non-overlapping events in 30 days, got {valid_count}"
+    
+    def test_multi_symbol_events_independent(self):
+        """
+        Test that different symbols can have concurrent events.
+        
+        Overlap constraint is per-symbol, not global.
+        """
+        labeler = TripleBarrierLabeler()
+        
+        dates = pd.date_range('2024-01-01', periods=15, freq='B')
+        
+        # Create data for 2 symbols
+        df = pd.concat([
+            pd.DataFrame({
+                'symbol': 'A',
+                'date': dates,
+                'adj_open': [100] * 15,
+                'adj_high': [101] * 15,
+                'adj_low': [99] * 15,
+                'adj_close': [100] * 15,
+                'atr_14': [1.0] * 15,
+                'can_trade': [True] * 15
+            }),
+            pd.DataFrame({
+                'symbol': 'B',
+                'date': dates,
+                'adj_open': [200] * 15,
+                'adj_high': [201] * 15,
+                'adj_low': [199] * 15,
+                'adj_close': [200] * 15,
+                'atr_14': [2.0] * 15,
+                'can_trade': [True] * 15
+            })
+        ]).reset_index(drop=True)
+        
+        result = labeler.label_events(df)
+        
+        # Both symbols should have events
+        for symbol in ['A', 'B']:
+            symbol_events = result[(result['symbol'] == symbol) & (result['event_valid'] == True)]
+            assert len(symbol_events) > 0, f"Symbol {symbol} should have valid events"

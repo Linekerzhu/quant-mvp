@@ -1,4 +1,4 @@
-# 美股日频量化MVP执行计划 v4
+# 美股日频量化MVP执行计划 v4.1 (Futu版)
 
 ## 修订历史
 
@@ -16,6 +16,12 @@
   8. **成分变更日从数据源取实际生效日期**（§3）。
   9. **信号不一致分类字段**：加速 debug（Phase E）。
   10. **补充测试项**：CPCV 边界测试、成本校准稳定性测试、漂移检测回归测试。
+- **v4.1**：执行层迁移 Alpaca → Futu OpenAPI。主要变更：
+  1. **交易执行从 Alpaca API 切换到 Futu OpenAPI**（futu-api Python SDK + FutuOpenD 网关）。
+  2. **数据采集保持 yfinance 主源不变**，Futu 行情作为第三备源 + 实时 bid/ask 数据源。
+  3. **成本模型参数调整**（Futu 佣金结构 vs Alpaca 零佣金）。
+  4. **Docker 部署适配 FutuOpenD 网关**。
+  5. **模拟盘策略调整**（Futu 模拟交易的差异处理）。
 
 ---
 
@@ -31,11 +37,14 @@
   - 每个决策必须可解释、可回溯。
   - 先单模型跑通全链路，再扩展集成。
 
+---
+
 ## 2) 范围
 
 ### In Scope
 
 - 双数据源容灾采集（主 yfinance / 备 Tiingo 或 Alpha Vantage）。
+- **Futu OpenAPI 作为第三备源 + 实时行情源**（v4.1 新增）。
 - Point-in-Time 数据管理 + 幸存者偏差处理。
 - 数据合约（Data Contract）：复权、分红、公司行为、可交易性定义。
 - 数据历史漂移检测 + Hash 冻结机制。
@@ -54,7 +63,7 @@
 - 成本模型周度校准闭环（含固定参数口径 schema）。
 - PDT 合规守卫。
 - 结构化 append-only 事件日志。
-- Alpaca 模拟盘（含显式滑点模型）+ 小资金实盘。
+- **Futu OpenAPI 模拟盘**（含显式滑点模型）+ 小资金实盘（v4.1 变更）。
 - SPY buy-and-hold 基准对比。
 - 模型重训、特征漂移监控、版本管理、告警。
 - 每日流水线幂等性保证（v4 新增）。
@@ -68,6 +77,8 @@
 - 多市场并行。
 - 深度学习模型（LSTM / Transformer），留作升级路径。
 - 横截面特征（行业内 Z-score 等）、HRP 组合优化、Market Impact Model——记录于升级路径。
+
+---
 
 ## 3) 股票池
 
@@ -156,22 +167,27 @@
   - 若 Raw Close 变化 > 50% 但 Adj Close 变化 < 5%，判定为拆股，非异常。
   - 若 Adj Close 变化 > 50%，标记为异常，人工审核后决定保留/剔除。
 
+---
+
 ## 4) 技术栈
 
 - 语言：Python 3.11+
 - 数据采集：yfinance（主）、tiingo 或 alpha_vantage（备）
+- **实时行情：Futu OpenAPI**（v4.1 新增，获取实时 bid/ask）
 - 数据存储：DuckDB + Parquet
 - 特征工程：pandas、ta-lib、numpy
 - 建模：lightgbm（MVP 主线）、catboost（Phase C+ 条件扩展）、scikit-learn
   - training.yaml 预留 XGBoost 接口，可在遇到过拟合瓶颈时热插拔对比，无需修改架构。
 - 验证：自实现 CPCV（参考 skfolio / mlfinlab）
 - 回测：vectorbt（辅助）+ 自实现 walk-forward
-- 执行：alpaca-trade-api
+- **执行：futu-api（Futu OpenAPI Python SDK）+ FutuOpenD 网关**（v4.1 变更）
 - 调度：APScheduler
 - 告警：python-telegram-bot 或 smtplib
 - 实验记录：MLflow（本地）
 - 部署：Docker + docker-compose
 - 测试：pytest
+
+---
 
 ## 5) 项目结构
 
@@ -184,8 +200,8 @@ quant-mvp/
 ├── docker-compose.yaml
 ├── .env.example                           # API keys 模板（不入库）
 ├── .gitignore
-├── .claudeignore                          # v4 新增：AI Agent 上下文保护
-├── .cursorignore                          # v4 新增：AI Agent 上下文保护
+├── .claudeignore                          # AI Agent 上下文保护
+├── .cursorignore                          # AI Agent 上下文保护
 ├── config/
 │   ├── data_contract.yaml                 # 数据合约
 │   ├── data_sources.yaml                  # 双数据源配置
@@ -237,7 +253,8 @@ quant-mvp/
 │   │   └── pdt_guard.py                  # PDT 规则合规检查
 │   ├── execution/
 │   │   ├── __init__.py
-│   │   ├── alpaca_executor.py            # Alpaca 交易执行
+│   │   ├── futu_executor.py              # Futu OpenAPI 交易执行（v4.1 变更）
+│   │   ├── futu_quote.py                 # Futu 实时行情（bid/ask 获取）（v4.1 新增）
 │   │   └── slippage_model.py             # 显式滑点模拟
 │   └── ops/
 │       ├── __init__.py
@@ -247,7 +264,7 @@ quant-mvp/
 │       └── alerts.py                     # Telegram / 邮件告警
 ├── tests/
 │   ├── __init__.py
-│   ├── fixtures/                          # v4 新增：静态 Mock 数据
+│   ├── fixtures/                          # 静态 Mock 数据
 │   │   ├── mock_prices.parquet           # 含拆股、停牌、跳变的合成数据
 │   │   ├── mock_corporate_actions.csv    # 合成公司行为事件
 │   │   └── README.md                     # Mock 数据生成说明
@@ -260,20 +277,23 @@ quant-mvp/
 │   ├── test_models.py
 │   ├── test_model_gate.py
 │   ├── test_backtest.py
-│   ├── test_cpcv_boundary.py             # v4 新增：CPCV purge/embargo 边界测试
+│   ├── test_cpcv_boundary.py             # CPCV purge/embargo 边界测试
 │   ├── test_risk.py
 │   ├── test_pdt_guard.py
 │   ├── test_no_leakage.py
-│   ├── test_overfit_sentinels.py         # v4 新增：时间打乱 + dummy feature 双哨兵
-│   ├── test_cost_calibration.py          # 含校准稳定性测试（v4 扩展）
+│   ├── test_overfit_sentinels.py         # 时间打乱 + dummy feature 双哨兵
+│   ├── test_cost_calibration.py          # 含校准稳定性测试
 │   ├── test_signal_consistency.py        # 研究-交易一致性
-│   ├── test_idempotency.py              # v4 新增：流水线幂等性
+│   ├── test_idempotency.py              # 流水线幂等性
 │   └── test_event_logger.py
 ├── data/
 │   ├── raw/
 │   ├── processed/
 │   └── snapshots/                         # 版本化数据快照
 ├── models/
+├── opend/                                 # FutuOpenD 网关（v4.1 新增）
+│   ├── FutuOpenD                          # 网关二进制
+│   └── FutuOpenD.xml                      # OpenD 配置文件
 ├── reports/
 │   ├── backtest/
 │   ├── cost_calibration/
@@ -282,6 +302,8 @@ quant-mvp/
 └── logs/
     └── events/                           # append-only 事件日志存放
 ```
+
+---
 
 ## 6) 系统流程图
 
@@ -330,7 +352,7 @@ flowchart TB
     end
 
     subgraph execLayer [执行与监控层]
-        posSizing --> paperTrade[AlpacaPaper_Slippage]
+        posSizing --> paperTrade[FutuPaper_Slippage]
         paperTrade --> signalConsist[SignalConsistencyCheck]
         signalConsist --> costCalib[CostModel_WeeklyCalibration]
         costCalib --> liveSmall[SmallCapitalLive]
@@ -392,6 +414,8 @@ embargo_window = max(feature_lookback, execution_delay, corporate_action_latency
 
 > 此公式预留了 `corporate_action_latency` 接口。若未来引入非 PIT 的公司行为数据，只需调整此参数而非重构逻辑。
 
+---
+
 ## 7) 分阶段执行
 
 ### 阶段划分
@@ -407,7 +431,7 @@ embargo_window = max(feature_lookback, execution_delay, corporate_action_latency
 
 - 建立完整项目骨架（目录、`__init__.py`、Dockerfile、.env.example、.gitignore、requirements.txt、`.claudeignore`、`.cursorignore`）。
 - 编写 `config/data_contract.yaml`、`config/event_protocol.yaml`、`config/universe.yaml`（含成分变更规则）。
-- **生成静态 Mock 数据集**（`tests/fixtures/`）（v4 新增）：
+- **生成静态 Mock 数据集**（`tests/fixtures/`）：
   - `mock_prices.parquet`：合成数据，包含拆股（Raw 跳变但 Adj 平滑）、停牌（连续 NaN）、异常跳变（Adj > 50%）、正常数据、退市标的。
   - `mock_corporate_actions.csv`：合成公司行为事件（拆股日期、退市日期、分红 Ex-Date）。
   - 附 `README.md` 说明生成逻辑，确保 Mock 数据本身可复现。
@@ -449,7 +473,7 @@ embargo_window = max(feature_lookback, execution_delay, corporate_action_latency
   - 成交量类：相对成交量（vs 20 日均量）、OBV、量价背离。
   - 均线偏离类：价格 vs SMA/EMA 的 z-score（20/60 日）。
   - 市场状态类：VIX 变化率、市场宽度（涨跌比）。
-- **注入 Dummy Noise Feature**（v4 新增）：在特征矩阵中加入一列纯高斯白噪声 `dummy_noise ~ N(0,1)`，随数据一起落盘。此特征不参与任何逻辑，仅用于 Phase C 的过拟合哨兵检测。
+- **注入 Dummy Noise Feature**：在特征矩阵中加入一列纯高斯白噪声 `dummy_noise ~ N(0,1)`，随数据一起落盘。此特征不参与任何逻辑，仅用于 Phase C 的过拟合哨兵检测。
 - 实现 Regime Detector（波动率水平 + ADX 趋势强度），输出 regime 标签作为特征输入模型，不直接驱动风控动作。
 - 严格按 §6.5 事件生成协议实现 Triple Barrier 标签（参数从 `config/event_protocol.yaml` 读取）。
 - 实现样本唯一性加权：计算 average uniqueness，并发标签降权，并发统计窗口 = 事件实际存活期。
@@ -479,9 +503,9 @@ embargo_window = max(feature_lookback, execution_delay, corporate_action_latency
 **任务**：
 
 - 训练 LightGBM 单模型（传入 sample_weight，超参从 `config/training.yaml` 读取）。
-- **执行 Dummy Feature 哨兵检查**（v4 新增）：训练后检查 `dummy_noise` 的 Gain Importance 和 SHAP 排名。若进入前 50%，判定过拟合，回退 Phase B 检查特征/标签。
+- **执行 Dummy Feature 哨兵检查**：训练后检查 `dummy_noise` 的 Gain Importance 和 SHAP 排名。若进入前 25% 或相对贡献 > 1.0，判定过拟合，回退 Phase B 检查特征/标签。
 - 实现 CPCV 验证，参数：N=10 splits, K=2 test splits，purge_window 和 embargo_window 按 §6.5 统一公式计算。
-- **CPCV 边界测试**（v4 新增）：在 fold 边界处构造最小样本，验证 purge/embargo 确实将 overlap 清除干净。
+- **CPCV 边界测试**：在 fold 边界处构造最小样本，验证 purge/embargo 确实将 overlap 清除干净。
 - 实现 Walk-Forward 验证（滚动窗口，训练窗 = 2 年，测试窗 = 3 个月）作为 CPCV 补充对比。
 - 实现 Deflated Sharpe Ratio 计算。
 - 实现 PBO（Probability of Backtest Overfitting）计算。
@@ -492,37 +516,66 @@ embargo_window = max(feature_lookback, execution_delay, corporate_action_latency
 **成本模型参数口径（Cost Model Schema）**：
 
 > 定义在 `config/training.yaml` 的 `cost_model` 段，校准闭环更新此段参数。
+> **v4.1 更新**：已从 Alpaca 零佣金迁移到 Futu 佣金结构。
 
 ```yaml
 cost_model:
-  # --- 固定成本 ---
-  commission_per_share: 0.0       # Alpaca 零佣金
+  # --- 固定成本（Futu 美股佣金结构）---
+  broker: "futu"                  # 券商标识
+  
+  commission:
+    type: "per_share_tiered"      # 阶梯式每股收费
+    per_share_usd: 0.0049         # 每股 $0.0049
+    min_per_order_usd: 0.99       # 每笔订单最低 $0.99
+    max_per_order_pct: 0.005      # 最高不超过成交金额的 0.5%
+  
+  platform_fee:
+    type: "tiered_monthly"        # 按月交易量阶梯
+    tiers:
+      - max_shares: 500
+        per_share: 0.0100
+        min_per_order: 1.00
+      - max_shares: 1000
+        per_share: 0.0080
+        min_per_order: 1.00
+      - max_shares: 5000
+        per_share: 0.0070
+        min_per_order: 1.00
+      - max_shares: 10000
+        per_share: 0.0060
+        min_per_order: 1.00
+      - max_shares: null          # 10000+
+        per_share: 0.0050
+        min_per_order: 1.00
+  
+  # 监管费用
   sec_fee_rate: 0.0000278         # SEC fee（仅卖出，按成交额）
   taf_fee_per_share: 0.000166     # TAF fee
-
-  # --- 可校准参数（初始值，Phase E 起周度更新） ---
+  finra_fee_rate: 0.0000145       # FINRA Trading Activity Fee
+  
+  # --- 可校准参数 ---
   spread_bps:
     default: 1.0                  # 默认 spread 假设（bps）
-    by_adv_bucket:                # 按日均成交额分桶
+    by_adv_bucket:
       low: 2.0                    # ADV < $20M
       mid: 1.0                    # $20M ≤ ADV < $100M
       high: 0.5                   # ADV ≥ $100M
-
+  
   impact_bps:
-    model: "linear_adv"           # 冲击模型：线性按 ADV 缩放
-    coeff: 0.1                    # impact_bps = coeff × (order_value / ADV)
-
+    model: "linear_adv"
+    coeff: 0.1                    # impact = coeff * (order_value / ADV)
+  
   fill_probability:
     premarket: 0.70               # 盘前限价单成交率假设
     regular: 0.95                 # 盘中限价单成交率假设
-
+  
   # --- 校准配置 ---
   calibration:
     frequency: weekly
     mid_price_definition: "order_submission_mid"  # mid = 下单时刻的 (bid+ask)/2
     alert_threshold_mult: 2.0     # 实际滑点 > 假设 × 此倍数时告警
     min_samples_for_update: 20    # 每桶最少样本数才更新
-    max_param_change_pct: 100     # 单次校准参数变化上限（%），超出则告警不自动更新（v4 新增）
+    max_param_change_pct: 100     # 单次校准参数变化上限（%），超出则告警不自动更新
 ```
 
 **产出**：
@@ -537,7 +590,7 @@ cost_model:
 - Deflated Sharpe > 0。
 - 策略风险调整后收益优于 SPY buy-and-hold。
 - 无数据泄漏。
-- Dummy Feature `dummy_noise` 的 Gain Importance 排名不在前 50%。
+- Dummy Feature `dummy_noise` 的 Gain Importance 排名不在前 25%，且相对贡献 ≤ 1.0。
 - CPCV 边界测试通过：purge/embargo 无 overlap 残留。
 
 **硬门控**：若 PBO >= 0.5 或 Deflated Sharpe <= 0 或 Dummy Feature 哨兵触发，禁止进入 Phase C+ 或 Phase D，必须回退到 Phase B 调整特征或标签参数后重新执行 Phase C。
@@ -627,38 +680,62 @@ cost_model:
 
 **任务**：
 
-- 接入 Alpaca Paper Trading API。
-- 叠加显式滑点模型（Alpaca Paper 默认零滑点，不叠加会导致收益虚高）。
-- 下单策略：美东收盘后运行流水线计算信号，次日开盘前以限价单（limit order, extended_hours=true, time_in_force=day）提交。若非盘前时段则排队至次日。
-- **实现每日流水线幂等性**（v4 新增）：
-  - `daily_job.py` 必须支持中断后安全重启：
-    - 每个步骤（数据采集、校验、特征、信号、执行）完成后写入检查点（checkpoint）到事件日志。
-    - 重启时读取检查点，跳过已完成步骤，从中断点继续。
-    - 中间产物使用当日日期作为幂等键：同一日重复运行同一步骤，覆盖而非追加（数据/特征/信号）。
-    - 执行层特殊处理：若订单已提交（检查点记录了 order_id），重启时先查询订单状态，不重复提交。
+- **接入 Futu OpenAPI**（通过 FutuOpenD 网关连接）。
+- 模拟盘使用 `TrdEnv.SIMULATE`，实盘使用 `TrdEnv.REAL`（需 `unlock_trade`）。
+- 叠加显式滑点模型（Futu 模拟盘同样不反映真实滑点，必须叠加）。
+- 下单策略：美东收盘后运行流水线计算信号，次日开盘前以限价单提交：
+  ```python
+  trd_ctx.place_order(
+      price=target_price,
+      qty=shares,
+      code="US.AAPL",                    # Futu 美股代码格式：US.{TICKER}
+      trd_side=TrdSide.BUY,              # 或 TrdSide.SELL
+      order_type=OrderType.NORMAL,        # 限价单
+      trd_env=TrdEnv.SIMULATE,            # Phase E 模拟 / Phase F 改 REAL
+      time_in_force=TimeInForce.DAY,      # 当日有效
+      fill_outside_rth=True,              # 允许盘前盘后成交
+      remark="intent_id:{intent_id}"      # 幂等键写入 remark 字段（最长 64 字节）
+  )
+  ```
+- FutuOpenD 网关必须保持运行，加入进程监控和自动重启。
 - 所有操作写入 append-only 事件日志（信号、目标仓位、订单、成交、滑点偏差、拒单原因）。
+- **mid-price 获取**：通过 Futu OpenAPI 的 `get_order_book` 接口获取实时摆盘数据，取 Bid[0] 和 Ask[0] 的中点。需先 `subscribe` 该标的的 ORDER_BOOK 类型。
 - 实现成本模型周度校准闭环：
   - 每周从事件日志中提取：订单到成交价格偏差、限价成交率、成交价 vs mid-price 分布。
-  - mid-price 定义：下单提交时刻的 `(bid + ask) / 2`，从 Alpaca API 获取并记录在事件日志中。
+  - mid-price 定义：下单提交时刻的 `(bid + ask) / 2`，从 Futu API 获取并记录在事件日志中。
   - 按 `premarket` / `regular` 分组统计，分别更新成本模型对应参数。
   - 自动回归更新 `config/training.yaml` 中 `cost_model` 段的可校准参数。
   - 每桶样本数 < `min_samples_for_update`（默认 20）时不更新该桶，沿用初始值。
-  - 单次校准参数变化 > `max_param_change_pct`（默认 100%）时告警但不自动更新，需人工确认（v4 新增）。
+  - 单次校准参数变化 > `max_param_change_pct`（默认 100%）时告警但不自动更新，需人工确认。
   - 生成校准报告（`reports/cost_calibration/`），记录参数变化趋势。
   - 若实际滑点 > 回测假设的 `alert_threshold_mult` 倍，触发告警。
 - 实现研究-交易信号一致性验证：
   - 每日对比 paper 系统的信号输出与回测引擎在同一天同一标的上的信号输出。
   - 允许差在执行价格，不允许差在信号方向或"是否交易"。
-  - **不一致事件写入日志时附带分类字段**（v4 新增）：
+  - **不一致事件写入日志时附带分类字段**：
     - `config_mismatch`：参数/版本不一致
     - `data_snapshot_mismatch`：使用了不同的数据快照
     - `feature_pipeline_mismatch`：特征版本或计算路径不同
     - `timing_mismatch`：时区/交易日对齐问题
     - `unknown`：需进一步排查
   - 若不一致，写入事件日志（level=ERROR）并触发告警。
+- 实现每日流水线幂等性：
+  - `daily_job.py` 必须支持中断后安全重启：
+    - 每个步骤（数据采集、校验、特征、信号、执行）完成后写入检查点（checkpoint）到事件日志。
+    - 重启时读取检查点，跳过已完成步骤，从中断点继续。
+    - 中间产物使用当日日期作为幂等键：同一日重复运行同一步骤，覆盖而非追加（数据/特征/信号）。
+    - 执行层特殊处理：若订单已提交（检查点记录了 order_id），重启时先查询订单状态，不重复提交。
+    - **部分成交处理**：每个 `(trade_date, symbol)` 对应唯一的 `intent_id`（幂等键）。订单状态为 `partially_filled` 时：允许 **至多一次** "撤单-重挂"操作，新订单继承原 `intent_id`，事件日志记录原 `order_id` → 新 `order_id` 的映射及原因。
 - 部署告警通知（Telegram Bot 或邮件）。
 - 每周生成模拟盘 vs 回测偏差报告。
 - 编写测试：`test_idempotency.py`、`test_cost_calibration.py`（含校准稳定性：异常周不拧爆参数）。
+
+**Futu 特有注意事项**：
+
+- **FutuOpenD 网关依赖**：Futu OpenAPI 不是纯 REST API，需要本地运行 FutuOpenD 网关进程。网关通过 TCP 协议（默认端口 11111）与 Python SDK 通信。网关首次登录需要手机验证码，后续可通过配置保持登录态。生产环境必须配置进程监控（systemd / supervisor），网关断线自动重启。
+- **订阅额度**：Futu 对实时行情有订阅额度限制（同时订阅的股票数量）。S&P 500 全部订阅实时行情可能超限。解决方案：仅在下单前临时订阅目标标的获取 bid/ask，用完取消订阅。
+- **交易解锁**：实盘下单前必须调用 `unlock_trade`（传入交易密码的 MD5）。解锁有效期内可持续下单，超时需重新解锁。交易密码存储在 `.env` 文件中，不入 Git。
+- **Futu 模拟盘的局限性**：Futu 美股模拟账户功能较 Alpaca Paper Trading 更简单。OpenAPI 的美股模拟账户尚未升级到融资融券模式（官方规划中）。模拟盘成交逻辑可能与真实市场有偏差，更需要依赖我们的显式滑点模型。建议：Phase E 适当缩短（3-4 周），更快进入 Phase F 小资金实盘验证。
 
 **产出**：20-30 个交易日运行记录、偏差分析报告、成本校准报告、信号一致性报告。
 
@@ -679,7 +756,12 @@ cost_model:
 
 **任务**：
 
-- 以极小资金上线（总资金 5%-10%，注意 Alpaca margin 账户最低 $2,000 要求）。
+- 以极小资金上线（总资金 5%-10%）。
+- 使用 Futu 美股真实交易账户（`TrdEnv.REAL`），下单前须调用 `unlock_trade` 解锁。
+- 注意 Futu 美股账户类型：
+  - 若为融资账户（Margin），受 PDT 规则约束（$25k 以下限制日内交易）。
+  - 系统内置 `pdt_guard.py` 负责拦截，不依赖券商端拦截。
+- FutuOpenD 网关需配置真实账户的登录凭证，且需保持长期在线。
 - 仅主策略运行，备份策略待命。
 - 每周生成标准化复盘报告（收益归因、成本分析、风控事件、漂移信号、vs SPY 对比）。
 - 持续运行成本校准闭环，对比 paper 阶段与 live 阶段的成本差异。
@@ -696,6 +778,8 @@ cost_model:
 - 未触发 PDT。
 - 实盘滑点与校准后模型假设偏差 < 50%。
 
+---
+
 ## 8) 风险参数
 
 所有参数定义在 `config/risk_limits.yaml` 和 `config/position_sizing.yaml` 中：
@@ -708,6 +792,9 @@ cost_model:
 - 仓位基线：0.25x Fractional Kelly。
 - 总杠杆上限：1.0x（独立 Kelly 归一化上限）。
 - 自动降级阈值：连续 5 日 daily Sharpe < -1 或回撤 > 8%。
+- **交易佣金**：按 Futu 实际费率（每股 $0.0049，每笔最低 $0.99 + 阶梯式平台费），在成本模型中准确反映。低频策略下月佣金成本可控。
+
+---
 
 ## 9) 预算
 
@@ -715,12 +802,18 @@ cost_model:
 - 拆分：数据 ¥0-800 / 算力 ¥0-600（本地优先）/ 服务 ¥100-600。
 - LightGBM + CatBoost 均为 CPU 友好型，无需 GPU。
 - 备源按量付费，仅在主源异常时启用。
+- **Futu 交易成本**：每股 $0.0049，每笔最低 $0.99，加上阶梯式平台费。假设每天 5-10 笔交易，月成本约 $100-200。
+
+---
 
 ## 10) 运营 SOP
 
 - 每日（**幂等流水线，支持中断重启**）：数据更新 -> 公司行为检查 -> Hash 漂移检测 -> 校验 -> 特征 -> 信号 -> 研究-交易一致性检查 -> 风控 + PDT 检查 -> 执行 -> 事件日志 -> 告警检查。
 - 每周：收益归因、成本占比、成本模型校准、风控事件、IC 变化、vs SPY 偏差。
 - 每月：重训 -> CPCV 重新验证 -> 模型换代门控检查 -> 新旧 A/B 对比 -> 决定是否切换 -> 版本冻结 -> 回滚点更新。
+- **FutuOpenD 网关监控**：每日检查网关进程状态，断线自动重启。
+
+---
 
 ## 11) 验收清单
 
@@ -731,7 +824,7 @@ cost_model:
 - [ ] 所有单元测试基于静态 Mock 数据，零网络依赖。
 - [ ] Point-in-Time 对齐 + 泄漏检测全部通过。
 - [ ] 特征泄漏哨兵通过（时间打乱后 AUC ≤ 0.55）。
-- [ ] Dummy Feature 哨兵通过（噪声特征重要性不在前 50%）。
+- [ ] Dummy Feature 哨兵通过（噪声特征重要性不在前 25% 且相对贡献 ≤ 1.0）。
 - [ ] 幸存者偏差已处理或量化（方案 B 区间估算披露）。
 - [ ] 事件生成协议正确实现（同一标的事件不重叠）。
 - [ ] 样本权重正确反映标签并发度。
@@ -746,12 +839,15 @@ cost_model:
 - [ ] append-only 事件日志完整可回溯。
 - [ ] 全部测试套件通过（pytest）。
 - [ ] Docker 可一键启动（docker-compose up）。
+- [ ] **FutuOpenD 网关进程监控正常**。
 - [ ] 模拟盘 20-30 交易日稳定运行。
 - [ ] 成本校准闭环正常运行（含校准稳定性：异常周不拧爆参数）。
 - [ ] 研究-交易信号一致性 < 1% 不一致率（含分类字段）。
 - [ ] 每日流水线幂等性测试通过。
 - [ ] 小资金实盘 4-6 周未突破阈值。
 - [ ] 周报/月报模板与归档就绪。
+
+---
 
 ## 12) 升级条件
 
@@ -776,6 +872,8 @@ cost_model:
 9. **深度学习模型**：LSTM / Transformer（需 GPU 预算支撑）。
 10. **NLP 情绪因子、RL 组合优化、更高频数据**。
 
+---
+
 ## 13) 技术风险清单
 
 > 按可能把系统搞崩的程度排序。
@@ -786,14 +884,19 @@ cost_model:
 | P0 | Purging/Embargo 边界实现错误 | 验证指标虚高，实盘崩溃 | 统一公式 §6.5 + CPCV 边界测试 + 双重过拟合哨兵 |
 | P0 | 数据源历史修订导致回测不可复现 | 研究结论不可信 | Hash 冻结（含 Raw + adj_factor）+ 漂移检测 + 快照版本管理 |
 | P1 | PIT 仅做了价格，成分/财务不是 PIT | 残余泄漏 | MVP 方案 B 显式披露偏差（区间估算），进阶补齐 |
-| P1 | Paper 与 Live 执行机制差异 | Phase F 偏差巨大 | 成本校准闭环（盘前/盘中分组）+ 偏差告警 + 校准稳定性护栏 |
+| P1 | Paper 与 Live 执行机制差异 | Phase F 偏差巨大 | 成本校准闭环（盘前/盘中分组）+ Futu 佣金精确建模 + 偏差告警 + 校准稳定性护栏 |
 | P1 | Kelly 协方差病态导致爆炸性仓位 | 风控失效 | 独立 Kelly + 总量归一化 |
 | P1 | 每日流水线中断导致脏数据/重复订单 | 实盘异常 | 幂等性设计 + 检查点机制 |
+| **P1** | **FutuOpenD 网关进程中断** | **下单/行情全部中断** | **进程监控 + 自动重启 + 断线重连 + 事件日志告警** |
 | P2 | 双模型/Meta-Label 导致样本效率下降 | 更"先进"但更不稳定 | 单模型先行 + 条件化启用 |
 | P2 | Regime 不稳引入状态切换噪声 | 风控频繁误触发 | MVP 阶段仅做软特征 |
 | P2 | 成分变更日信号/持仓不一致 | 实盘异常交易 | 冷启动规则 + 持仓迁移规则 + 信号冻结 |
+| **P2** | **Futu 模拟盘与实盘行为差异** | **模拟盘成交机制可能不完全模拟真实市场** | **显式滑点模型叠加 + Phase E/F 成本校准对比** |
+| **P3** | **Futu 历史 K 线额度限制** | **大批量初始数据拉取受限** | **主数据源 yfinance 不受此限，Futu 仅用于实时行情** |
 | P3 | 纯量价因子 Alpha 衰减 | 长期收益下降 | 升级路径补充横截面/另类数据 |
 | P3 | Agent 因 Flaky 测试陷入死循环 | 开发效率崩溃 | 静态 Mock Data + 零网络依赖测试 |
+
+---
 
 ## 14) Agent 执行指令
 
@@ -812,6 +915,7 @@ cost_model:
 - 禁止创建名为 logging 的目录或模块（与 Python 标准库冲突）。
 - 禁止新增 Out of Scope 模块。
 - 每一步操作必须写入事件日志。
+- **严禁在测试中发起网络请求**（包括 yfinance、Tiingo、**Futu OpenAPI** 等 API 调用）。集成测试若需真实 API，必须标记为 `@pytest.mark.integration` 并默认不在 CI 中运行。
 
 **防御性原则**：
 
@@ -821,8 +925,8 @@ cost_model:
   - Phase B 冻结后：`src/features/`、`src/labels/`、特征/标签 Parquet 文件不可因 Phase C/D 的调试而被修改。
   - 若下游报错的根因确实在上游，必须显式声明回退（如"回退到 Phase A 修复数据合约"），走正式的回退流程，而非静默修改。
 - **禁止迎合测试**：Agent 不得为了让测试通过而降低测试标准（如放宽阈值、注释掉断言）。测试不通过说明实现有问题，应修复实现而非修改测试。
-- **测试确定性**（v4 新增）：所有单元测试必须使用 `tests/fixtures/` 下的静态 Mock 数据集，**严禁在测试中发起网络请求**（包括 yfinance、Tiingo、Alpaca 等 API 调用）。集成测试若需真实 API，必须标记为 `@pytest.mark.integration` 并默认不在 CI 中运行。
-- **上下文保护**（v4 新增）：
+- **测试确定性**：所有单元测试必须使用 `tests/fixtures/` 下的静态 Mock 数据集，**严禁在测试中发起网络请求**（包括 yfinance、Tiingo、Alpaca、**Futu** 等 API 调用）。集成测试若需真实 API，必须标记为 `@pytest.mark.integration` 并默认不在 CI 中运行。
+- **上下文保护**：
   - 项目根目录必须包含 `.claudeignore` 和 `.cursorignore`，内容至少覆盖：
     ```
     data/raw/**
@@ -835,3 +939,68 @@ cost_model:
     *.joblib
     ```
   - Agent 若需探查数据内容，必须编写独立的 `.py` 脚本输出 `df.head()` 或 `df.describe()`，**严禁直接读取 Parquet/日志文件内容到上下文**。
+
+---
+
+## 附录 A：Futu OpenAPI 快速参考
+
+### 股票代码格式
+
+| 市场 | Futu 格式 | yfinance 格式 |
+|------|-----------|---------------|
+| 美股 | `US.AAPL` | `AAPL` |
+| 港股 | `HK.00700` | `0700.HK` |
+
+转换函数：
+```python
+def to_futu_code(ticker: str) -> str:
+    """yfinance ticker → Futu code"""
+    return f"US.{ticker}"
+
+def from_futu_code(futu_code: str) -> str:
+    """Futu code → yfinance ticker"""
+    return futu_code.replace("US.", "")
+```
+
+### 关键 API 接口
+
+| 功能 | API | 说明 |
+|------|-----|------|
+| 下单 | `place_order` | 支持限价/市价，可写入 remark 作为幂等键 |
+| 查订单 | `order_list_query` | 按 order_id 查询状态 |
+| 撤单 | `modify_order` | 使用 ModifyOrderOp.CANCEL |
+| 持仓 | `position_list_query` | 获取当前持仓 |
+| 资金 | `accinfo_query` | 账户资金信息 |
+| 解锁 | `unlock_trade` | 实盘交易前必须调用 |
+| 实时摆盘 | `get_order_book` | 获取 bid/ask，需先 subscribe |
+
+### FutuOpenD 配置要点
+
+```xml
+<!-- FutuOpenD.xml 关键配置 -->
+<OpenD>
+    <Api>
+        <Ip>127.0.0.1</Ip>
+        <Port>11111</Port>
+    </Api>
+    <Account>
+        <!-- 平台账号（牛牛号） -->
+        <AccountId>YOUR_NN_ID</AccountId>
+        <!-- 登录密码 MD5 -->
+        <LoginPasswordMD5>YOUR_MD5_PASSWORD</LoginPasswordMD5>
+    </Account>
+</OpenD>
+```
+
+### 环境变量
+
+```bash
+# .env
+FUTU_OPEND_HOST=127.0.0.1
+FUTU_OPEND_PORT=11111
+FUTU_TRADE_PASSWORD_MD5=your_md5_password  # 实盘解锁用
+```
+
+---
+
+*plan.md v4.1 - 执行层已迁移至 Futu OpenAPI*

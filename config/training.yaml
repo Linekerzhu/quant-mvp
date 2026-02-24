@@ -1,5 +1,6 @@
 # Training Configuration
 # Model training parameters and cost model schema
+# v4.1 Update: Migrated from Alpaca to Futu OpenAPI cost structure
 
 # Model selection
 model:
@@ -75,14 +76,94 @@ scramble_sentinel:
   auc_threshold: 0.55      # Mean AUC must be <= 0.55
   auc_single_threshold: 0.58  # No single run > 0.58
 
-# Cost Model Schema (per Plan v4 patch)
+# =============================================================================
+# Cost Model Schema (v4.1 - Futu Commission Structure)
+# =============================================================================
+# Migrated from Alpaca zero-commission to Futu tiered pricing.
+# Source: https://www.futuhk.com/hans/support/topic2_283
+# 
+# Futu US Stock Fee Structure (as of 2024-2025):
+# - Commission: $0.0049 per share, min $0.99 per order
+# - Platform Fee: Tiered by monthly volume (see tiers below)
+# - Regulatory: SEC (0.00278%), TAF ($0.000166/share), FINRA (0.00145%)
+# =============================================================================
+
 cost_model:
-  # Fixed costs
-  commission_per_share: 0.0       # Alpaca zero commission
-  sec_fee_rate: 0.0000278         # SEC fee (sell only)
-  taf_fee_per_share: 0.000166     # TAF fee
+  # --- Broker Identification ---
+  broker: "futu"                  # v4.1: Changed from "alpaca"
+  broker_region: "US"             # US market trading
   
-  # Calibratable parameters
+  # --- Commission Structure (Per Share Tiered) ---
+  commission:
+    type: "per_share_tiered"
+    per_share_usd: 0.0049         # $0.0049 per share
+    min_per_order_usd: 0.99       # Minimum $0.99 per order
+    max_per_order_pct: 0.005      # Cap at 0.5% of trade value
+    
+    # Calculation: max(min_per_order, per_share * qty, max_pct * trade_value)
+    # Example: 100 shares @ $50 = $0.49 commission, but min $0.99 applies
+    # Example: 1000 shares @ $500 = $4.90 commission
+  
+  # --- Platform Fee (Monthly Volume Tiered) ---
+  # Note: These tiers reset monthly. For backtesting, we use conservative estimates.
+  platform_fee:
+    type: "tiered_monthly"
+    billing_currency: "USD"
+    
+    tiers:
+      - tier: 1
+        max_shares: 500
+        per_share_usd: 0.0100
+        min_per_order_usd: 1.00
+        description: "First 500 shares per month"
+      
+      - tier: 2
+        max_shares: 1000
+        per_share_usd: 0.0080
+        min_per_order_usd: 1.00
+        description: "501-1000 shares per month"
+      
+      - tier: 3
+        max_shares: 5000
+        per_share_usd: 0.0070
+        min_per_order_usd: 1.00
+        description: "1001-5000 shares per month"
+      
+      - tier: 4
+        max_shares: 10000
+        per_share_usd: 0.0060
+        min_per_order_usd: 1.00
+        description: "5001-10000 shares per month"
+      
+      - tier: 5
+        max_shares: null           # Unlimited
+        per_share_usd: 0.0050
+        min_per_order_usd: 1.00
+        description: "10000+ shares per month"
+    
+    # For backtesting without actual volume history, assume tier 3 (conservative)
+    backtest_assumed_tier: 3
+  
+  # --- Regulatory Fees ---
+  regulatory_fees:
+    sec_fee:
+      rate: 0.0000278              # 0.00278% of trade value (sell only)
+      applies_to: "sell_only"
+      description: "SEC Transaction Fee"
+    
+    taf_fee:
+      per_share_usd: 0.000166      # $0.000166 per share (sell only)
+      min_per_trade_usd: 0.01
+      max_per_trade_usd: 8.30
+      applies_to: "sell_only"
+      description: "Trading Activity Fee (FINRA)"
+    
+    finra_fee:
+      rate: 0.0000145              # 0.00145% of trade value
+      applies_to: "both"
+      description: "FINRA Trading Activity Fee"
+  
+  # --- Slippage & Market Impact (Calibratable) ---
   spread_bps:
     default: 1.0                  # Default spread assumption (bps)
     by_adv_bucket:
@@ -91,20 +172,53 @@ cost_model:
       high: 0.5                   # ADV >= $100M
   
   impact_bps:
-    model: linear_adv
+    model: "linear_adv"
     coeff: 0.1                    # impact = coeff * (order_value / ADV)
+    description: "Linear market impact model based on ADV participation"
   
   fill_probability:
-    premarket: 0.70
-    regular: 0.95
+    premarket: 0.70               # Extended hours limit order fill rate
+    regular: 0.95                 # Regular hours limit order fill rate
   
-  # Calibration settings
+  # --- Cost Calculation Examples ---
+  # Example 1: Buy 100 shares @ $50 (Regular hours)
+  #   Commission: max(0.99, 0.0049*100) = $0.99
+  #   Platform Fee: max(1.00, 0.0070*100) = $1.00 (tier 3 assumed)
+  #   FINRA Fee: 0.00145% * $5000 = $0.07
+  #   Total: ~$2.06 per trade
+  #
+  # Example 2: Sell 100 shares @ $50 (Regular hours)
+  #   Commission: $0.99
+  #   Platform Fee: $1.00
+  #   SEC Fee: 0.00278% * $5000 = $0.14
+  #   TAF Fee: max(0.01, min(8.30, 0.000166*100)) = $0.02
+  #   FINRA Fee: $0.07
+  #   Total: ~$2.22 per trade
+  #
+  # Monthly estimate (5-10 trades/day, 20 trading days):
+  #   ~$400-800/month in commissions + fees
+
+  # --- Calibration Settings ---
   calibration:
     frequency: weekly
-    mid_price_definition: order_submission_mid
-    alert_threshold_mult: 2.0
-    min_samples_for_update: 20
-    max_param_change_pct: 100     # Per Plan v4 patch
+    mid_price_definition: "order_submission_mid"  # (bid + ask) / 2 at submission
+    alert_threshold_mult: 2.0     # Alert if actual > 2x assumed
+    min_samples_for_update: 20    # Min samples per bucket for update
+    max_param_change_pct: 100     # Max 100% change per calibration
+    
+    # Futu-specific calibration buckets
+    buckets:
+      - name: "premarket"
+        condition: "extended_hours = true"
+      - name: "regular"
+        condition: "extended_hours = false"
+    
+    # Track these metrics from live trading
+    metrics_to_track:
+      - fill_rate
+      - avg_slippage_bps
+      - avg_spread_bps
+      - time_to_fill_ms
 
 # Sample weights
 sample_weights:
@@ -116,3 +230,67 @@ sample_weights:
 class_imbalance:
   handle: class_weight
   monitor: true
+
+# =============================================================================
+# Kelly Criterion Parameters
+# =============================================================================
+
+kelly:
+  # Fractional Kelly for conservative sizing
+  fraction: 0.25
+  
+  # Minimum trades required for Kelly estimation
+  # Per Plan v4 Patch 6: If < 20 closed trades, fall back to equal weight
+  min_trades_for_estimate: 20
+  
+  # Estimation window
+  estimation_window:
+    trades: 50                    # Use last 50 closed trades
+    months: 6                     # Or last 6 months, whichever is smaller
+  
+  # Position limits
+  max_gross_leverage: 1.0         # No leverage in MVP
+  max_single_position_pct: 0.10   # Max 10% per symbol
+  
+  # Volatility targeting
+  target_annual_vol: 0.15         # 15% target volatility
+  
+  # Drawdown scaling
+  drawdown_scaling:
+    threshold: 0.05               # Start scaling at 5% DD
+    floor: 0.25                   # Min 25% of base position
+
+# =============================================================================
+# Futu OpenAPI Configuration
+# =============================================================================
+
+futu:
+  # Connection settings
+  opend:
+    host: "127.0.0.1"             # FutuOpenD gateway host
+    port: 11111                   # Default OpenD port
+    
+  # Trading environment
+  trading:
+    env: "SIMULATE"               # "SIMULATE" for Phase E, "REAL" for Phase F
+    market: "US"                  # US market
+    
+  # Code format mapping
+  code_format:
+    prefix: "US."                 # Futu uses "US.AAPL" format
+    
+  # Order settings
+  order:
+    default_type: "NORMAL"        # Limit order
+    time_in_force: "DAY"          # Day order
+    fill_outside_rth: true        # Allow pre/post market fills
+    
+  # Subscription limits (for real-time quotes)
+  subscription:
+    max_concurrent: 100           # Max simultaneous subscriptions
+    quote_type: "ORDER_BOOK"      # For bid/ask spread
+    
+  # Rate limiting
+  rate_limit:
+    orders_per_second: 10
+    quotes_per_second: 20

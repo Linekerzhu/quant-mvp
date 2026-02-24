@@ -55,8 +55,9 @@ class CorporateActionsHandler:
             adj_returns = symbol_df['adj_close'].pct_change().abs()
             
             # Detect splits
+            # FIX B3: Use >= to catch exact 2:1 splits (|return| = 0.50)
             split_mask = (
-                (raw_returns > self.split_threshold) &
+                (raw_returns >= self.split_threshold) &
                 (adj_returns < self.adj_threshold)
             )
             

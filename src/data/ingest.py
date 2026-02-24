@@ -453,7 +453,7 @@ class DualSourceIngest:
             if source_name == "backup" and not source.provides_adj_ohlc:
                 logger.warn("feature_degradation", {
                     "reason": "backup_source_no_adj_ohlc",
-                    "disabled_features": ["atr_14", "rsi_14", "macd_line", "macd_signal", "pv_correlation_5d"],
+                    "disabled_features": ["atr_20", "rsi_14", "macd_line", "macd_signal", "pv_correlation_5d"],
                     "retained_features": ["returns_*d", "rv_*d", "relative_volume_20d", "obv", "sma/ema_zscore"],
                     "action": "ohlc_features_disabled_per_patch1"
                 })
@@ -498,7 +498,7 @@ class DualSourceIngest:
                 logger.warn("feature_degradation", {
                     "reason": "backup_source_active",
                     "backup_limitations": "provides_adj_ohlc=false",
-                    "disabled_features": ["atr_14", "rsi_14", "macd_line", "macd_signal", "pv_correlation_5d"],
+                    "disabled_features": ["atr_20", "rsi_14", "macd_line", "macd_signal", "pv_correlation_5d"],
                     "retained_features": ["returns_*d", "rv_*d", "relative_volume_20d", "obv", "sma/ema_zscore"],
                     "action": "ohlc_features_disabled_per_patch1"
                 })

@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 import yaml
 import pandas as pd
+from pandas.tseries.offsets import BDay  # FIX B1: Import business day offset
 
 from src.data.ingest import DualSourceIngest
 from src.data.validate import DataValidator
@@ -86,10 +87,10 @@ class DailyJob:
     
     def _step_ingest(self, trade_date: str):
         """Step 1: Data ingestion."""
-        # FIX A2: Handle first run (no previous data file)
-        prev_date = (pd.Timestamp(trade_date) - timedelta(days=1)).strftime('%Y-%m-%d')
+        # FIX B1: Use business day offset to handle weekends/holidays
+        prev_bday = (pd.Timestamp(trade_date) - BDay(1)).strftime('%Y-%m-%d')
         try:
-            existing_data = read_parquet_safe(f"data/raw/daily_{prev_date}.parquet")
+            existing_data = read_parquet_safe(f"data/raw/daily_{prev_bday}.parquet")
         except FileNotFoundError:
             logger.info("first_run_detected", {"trade_date": trade_date})
             existing_data = pd.DataFrame()  # Triggers get_sp500_tickers fallback

@@ -10,6 +10,7 @@ Moved from universe.py (O5 fix) - PDT should be in risk module, not universe.
 from typing import List, Dict, Tuple
 from datetime import datetime, timedelta
 import pandas as pd
+from pandas.tseries.offsets import BDay  # FIX B5: Import business day offset
 
 from src.ops.event_logger import get_logger
 
@@ -90,7 +91,8 @@ class PDTGuard:
             return 0
         
         # Filter to recent trades within window
-        cutoff_date = pd.Timestamp.now() - pd.Timedelta(days=self.rolling_window_days)
+        # FIX B5: Use business days (BDay) not calendar days for PDT calculation
+        cutoff_date = pd.Timestamp.now() - BDay(self.rolling_window_days)
         
         recent_trades = [
             t for t in trade_history

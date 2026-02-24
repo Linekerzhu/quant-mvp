@@ -305,8 +305,8 @@ class FeatureEngineer:
                    'event_valid', 'sample_weight',
                    # FIX A1: Exclude RegimeDetector string columns (use numeric scores instead)
                    'regime_volatility', 'regime_trend', 'regime_combined',
-                   # FIX A1: Exclude old atr_14 if present (now using atr_20)
-                   'atr_14']
+                   # FIX A1: Exclude old atr_N columns that don't match current config
+                   'atr_14', 'atr_5', 'atr_10', 'atr_60']  # Only atr_{self.atr_window} is valid
         
         # Defensive assertion: detect any label-related columns
         label_cols = [col for col in df.columns if col.startswith('label')]

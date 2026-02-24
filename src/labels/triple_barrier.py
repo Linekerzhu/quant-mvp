@@ -50,6 +50,9 @@ class TripleBarrierLabeler:
         self.sl_mult = tb['stop_loss']['multiplier']
         self.max_holding_days = tb['max_holding_days']
         
+        # FIX A1: Dynamic ATR column name based on config
+        self.atr_col = f'atr_{self.atr_window}'
+        
         # Track active events per symbol: symbol -> (entry_date, exit_date)
         self._active_events: Dict[str, Tuple[pd.Timestamp, pd.Timestamp]] = {}
     
@@ -149,7 +152,7 @@ class TripleBarrierLabeler:
         symbol = symbol_df.loc[idx, 'symbol']
         
         # Must have ATR
-        if pd.isna(symbol_df.loc[idx, 'atr_14']):
+        if pd.isna(symbol_df.loc[idx, self.atr_col]):
             return False, 'missing_atr'
         
         # Must not be suspended
@@ -187,7 +190,7 @@ class TripleBarrierLabeler:
         entry_date = symbol_df.loc[entry_idx + 1, 'date']
         
         # ATR at trigger
-        atr = symbol_df.loc[entry_idx, 'atr_14']
+        atr = symbol_df.loc[entry_idx, self.atr_col]
         atr = max(atr, entry_price * self.min_atr_pct)
         
         # Set barriers

@@ -601,7 +601,12 @@ cost_model:
 - Dummy Feature `dummy_noise` 的 Gain Importance 排名不在前 25%，且相对贡献 ≤ 1.0。
 - CPCV 边界测试通过：purge/embargo 无 overlap 残留。
 
-**硬门控**：若 PBO >= 0.5 或 Deflated Sharpe <= 0 或 Dummy Feature 哨兵触发，禁止进入 Phase C+ 或 Phase D，必须回退到 Phase B 调整特征或标签参数后重新执行 Phase C。
+**硬门控**：
+- PBO < 0.3 → **Pass**（进入 Phase C+ 或 Phase D）
+- 0.3 ≤ PBO < 0.5 → **Warning**（允许进入，但需记录警告并人工复核）
+- PBO ≥ 0.5 → **Hard Reject**（必须回退到 Phase B 重新调整特征/标签）
+- Deflated Sharpe ≤ 0 → **Reject**
+- Dummy Feature 哨兵触发 → **Reject**
 
 ---
 

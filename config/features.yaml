@@ -43,9 +43,10 @@ categories:
       - name: rv_60d
         description: Realized volatility (60-day)
         lookback: 60
-      - name: atr_14
-        description: Average True Range (14)
-        lookback: 14
+      # FIX A1: ATR window matches event_protocol.yaml (20 days)
+      - name: atr_20
+        description: Average True Range (20)
+        lookback: 20
   
   volume:
     description: Volume-based indicators

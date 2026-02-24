@@ -21,9 +21,15 @@ class FeatureEngineer:
     # SECURITY: Do not log raw price samples or feature values in production
     REQUIRED_COLUMNS = ['symbol', 'date', 'adj_open', 'adj_high', 'adj_low', 'adj_close', 'volume']
     
-    def __init__(self, config_path: str = "config/features.yaml"):
+    def __init__(self, config_path: str = "config/features.yaml", 
+                 protocol_path: str = "config/event_protocol.yaml"):
         with open(config_path, 'r') as f:
             self.config = yaml.safe_load(f)
+        
+        # FIX A1: Load ATR window from event_protocol.yaml for consistency
+        with open(protocol_path, 'r') as f:
+            protocol_config = yaml.safe_load(f)
+        self.atr_window = protocol_config['triple_barrier']['atr']['window']
         
         self.version = self.config['version']
         self.dummy_seed = 42  # For reproducibility
@@ -158,8 +164,8 @@ class FeatureEngineer:
                     log_returns.rolling(window=window, min_periods=1).std() * np.sqrt(252)
                 )
             
-            # ATR (14)
-            df.loc[mask, 'atr_14'] = self._calc_atr(df[mask].copy(), window=14)
+            # FIX A1: Use ATR window from event_protocol.yaml, rename column to match
+            df.loc[mask, f'atr_{self.atr_window}'] = self._calc_atr(df[mask].copy(), window=self.atr_window)
         
         return df
     
@@ -298,7 +304,9 @@ class FeatureEngineer:
                    'label', 'label_barrier', 'label_return', 'label_holding_days', 
                    'event_valid', 'sample_weight',
                    # FIX A1: Exclude RegimeDetector string columns (use numeric scores instead)
-                   'regime_volatility', 'regime_trend', 'regime_combined']
+                   'regime_volatility', 'regime_trend', 'regime_combined',
+                   # FIX A1: Exclude old atr_14 if present (now using atr_20)
+                   'atr_14']
         
         # Defensive assertion: detect any label-related columns
         label_cols = [col for col in df.columns if col.startswith('label')]
@@ -365,16 +373,16 @@ class FeatureEngineer:
             )
         
         if provides_adj_ohlc:
-            # ATR per symbol (requires OHLC - explicit loop for pandas 2.x compatibility)
+            # FIX A1: Use ATR window from event_protocol.yaml
             atr_parts = []
             for symbol, group in df.groupby('symbol'):
-                atr = self._calc_atr(group.reset_index(drop=True), window=14)
+                atr = self._calc_atr(group.reset_index(drop=True), window=self.atr_window)
                 atr.index = group.index
                 atr_parts.append(atr)
-            df['atr_14'] = pd.concat(atr_parts)
+            df[f'atr_{self.atr_window}'] = pd.concat(atr_parts)
         else:
             # ATR requires OHLC, set to NaN when unavailable
-            df['atr_14'] = np.nan
+            df[f'atr_{self.atr_window}'] = np.nan
         
         return df
     

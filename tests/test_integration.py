@@ -198,9 +198,19 @@ class TestConfigurationConsistency:
         with open("config/event_protocol.yaml") as f:
             protocol_cfg = yaml.safe_load(f)
         
-        # Check that ATR window in features (14) matches protocol expectation
-        # This is implicit - features calculates atr_14, protocol uses it
-        assert True  # Placeholder for actual check
+        # FIX B1: Actually check ATR window consistency
+        # Get expected ATR window from protocol
+        expected_window = protocol_cfg['triple_barrier']['atr']['window']
+        
+        # Check that features.yaml has matching atr_N feature
+        volatility_features = features_cfg['categories']['volatility']['features']
+        atr_features = [f for f in volatility_features if f['name'].startswith('atr_')]
+        
+        assert len(atr_features) == 1, f"Expected exactly one ATR feature, got {atr_features}"
+        actual_window = int(atr_features[0]['name'].split('_')[1])
+        
+        assert actual_window == expected_window, \
+            f"ATR window mismatch: features.yaml has {actual_window}, event_protocol.yaml expects {expected_window}"
     
     def test_max_holding_days_consistency(self):
         """Test max holding days is consistent."""

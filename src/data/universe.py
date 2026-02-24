@@ -4,6 +4,7 @@ Universe Management Module
 Manages stock universe, filtering, and component changes.
 """
 
+from pathlib import Path
 from typing import List, Dict, Optional, Tuple
 import pandas as pd
 import numpy as np
@@ -50,8 +51,18 @@ class UniverseManager:
             return tickers
         except Exception as e:
             logger.error("sp500_fetch_failed", {"error": str(e)})
-            # Fallback: use mock tickers for testing
-            return [f"MOCK{i:03d}" for i in range(10)]
+            # FIX B2: Use static fallback file instead of MOCK tickers
+            fallback_path = Path("data/sp500_fallback.csv")
+            if fallback_path.exists():
+                logger.info("using_fallback_tickers", {"source": str(fallback_path)})
+                fallback_df = pd.read_csv(fallback_path)
+                return fallback_df['symbol'].tolist()
+            else:
+                logger.error("no_fallback_available")
+                raise RuntimeError(
+                    f"Failed to fetch S&P 500 tickers and no fallback file at {fallback_path}. "
+                    "Please ensure data/sp500_fallback.csv exists or check network connectivity."
+                )
     
     def filter_liquidity(
         self,

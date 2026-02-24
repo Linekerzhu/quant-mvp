@@ -52,10 +52,10 @@ purging:
   window_days: 10  # = max_holding_days
 
 embargo:
-  # Gap between train and test periods to prevent feature lookback leakage
-  # AFML standard: embargo is the gap AFTER test period to prevent leakage from
-  # feature calculation lookback into future training sets
-  # Formula: max(feature_lookback, execution_delay, corporate_action_latency)
+  # Feature lookback safety gap between train/test periods
+  # NOTE: This is NOT the AFML 'embargo' (which skips test samples at test start).
+  # This gap ensures no feature's lookback window crosses from test into train data.
+  # For CPCV implementation, apply this gap at BOTH sides of each test fold.
   feature_lookback: 60  # Maximum feature lookback window
   execution_delay: 1    # Signal to execution delay
   corporate_action_latency: 0  # Corporate action info delay

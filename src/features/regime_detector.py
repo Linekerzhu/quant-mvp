@@ -162,7 +162,9 @@ class RegimeDetector:
         df['dx'] = df['dx'].replace([np.inf, -np.inf], 0)
         adx = df['dx'].rolling(window=window, min_periods=1).mean()
         
-        return adx.fillna(20)  # Neutral ADX for initial values
+        # P2-3 Fix: Return NaN for initial values instead of filling with 20
+        # This maintains consistency with Plan's NaN handling strategy
+        return adx
     
     def get_regime_summary(self, df: pd.DataFrame) -> Dict:
         """Get summary statistics of detected regimes."""

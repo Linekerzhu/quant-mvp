@@ -270,18 +270,18 @@ class FeatureEngineer:
         return atr
     
     def _calc_obv(self, df: pd.DataFrame) -> pd.Series:
-        """Calculate On-Balance Volume."""
-        obv = [0]
+        """
+        Calculate On-Balance Volume (P2-5: Vectorized implementation).
         
-        for i in range(1, len(df)):
-            if df['adj_close'].iloc[i] > df['adj_close'].iloc[i-1]:
-                obv.append(obv[-1] + df['volume'].iloc[i])
-            elif df['adj_close'].iloc[i] < df['adj_close'].iloc[i-1]:
-                obv.append(obv[-1] - df['volume'].iloc[i])
-            else:
-                obv.append(obv[-1])
+        OBV = cumulative sum of signed volume
+        where sign = +1 if close > close_prev, -1 if close < close_prev, 0 otherwise
+        """
+        # Vectorized calculation
+        close_diff = df['adj_close'].diff()
+        signed_volume = df['volume'] * np.sign(close_diff)
+        obv = signed_volume.cumsum().fillna(0)
         
-        return pd.Series(obv, index=df.index)
+        return obv
     
     def _get_feature_columns(self, df: pd.DataFrame) -> List[str]:
         """Get list of feature columns (excluding metadata).

@@ -1,19 +1,54 @@
 version: '3.8'
 
 services:
+  # FutuOpenD Gateway
+  # Note: FutuOpenD requires manual setup for first-time login (verification code)
+  # Options:
+  # 1. Run OpenD on host machine (recommended for production)
+  # 2. Build custom OpenD image (requires FutuOpenD binary and config)
+  
+  # Option 1: Use host OpenD (uncomment below if OpenD runs on host)
+  # quant-mvp:
+  #   build: .
+  #   container_name: quant-mvp
+  #   network_mode: host  # Connect to host network to reach OpenD
+  #   ...
+
+  # Option 2: OpenD as service (requires pre-configured FutuOpenD.xml with saved login)
+  # opend:
+  #   image: futu-opend:latest  # You need to build this image yourself
+  #   container_name: futu-opend
+  #   volumes:
+  #     - ./opend/FutuOpenD.xml:/app/FutuOpenD.xml:ro
+  #     - ./opend/log:/app/log
+  #   ports:
+  #     - "11111:11111"
+  #   restart: unless-stopped
+  #   # OpenD must be configured with saved credentials to auto-login
+  #   # First-time setup requires interactive login with verification code
+
   quant-mvp:
     build: .
     container_name: quant-mvp
+    # For host OpenD: use host.docker.internal (Mac/Windows) or host IP (Linux)
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      - PYTHONPATH=/app
+      - LOG_LEVEL=INFO
+      # Point to OpenD gateway (adjust if using host network or different setup)
+      - FUTU_OPEND_HOST=${FUTU_OPEND_HOST:-host.docker.internal}
+      - FUTU_OPEND_PORT=${FUTU_OPEND_PORT:-11111}
     volumes:
       - ./data:/app/data
       - ./models:/app/models
       - ./reports:/app/reports
       - ./logs:/app/logs
       - ./.env:/app/.env:ro
-    environment:
-      - PYTHONPATH=/app
-      - LOG_LEVEL=INFO
     command: python -m src.ops.daily_job
+    # Depends on OpenD if running as service
+    # depends_on:
+    #   - opend
     
   # Optional: MLflow tracking server
   mlflow:

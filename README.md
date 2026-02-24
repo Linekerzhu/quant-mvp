@@ -9,7 +9,7 @@ A production-grade quantitative trading system for US equities (S&P 500) with:
 - **Machine Learning**: LightGBM/CatBoost with Triple Barrier labeling
 - **Rigor**: CPCV validation, Deflated Sharpe, PBO detection
 - **Risk Control**: Fractional Kelly sizing, multi-layer circuit breakers
-- **Live Trading**: Alpaca integration with paper → live progression
+- **Live Trading**: Futu OpenAPI (Moomoo) integration with simulate → real progression
 
 ## Quick Start
 

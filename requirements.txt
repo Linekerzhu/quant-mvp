@@ -24,8 +24,8 @@ shap>=0.42.0
 # Validation & backtesting
 vectorbt>=0.25.0
 
-# Execution
-alpaca-trade-api>=3.0.0
+# Execution (Futu OpenAPI - Moomoo)
+futu-api>=9.0.0
 
 # Scheduling & ops
 APScheduler>=3.10.0

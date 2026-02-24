@@ -101,6 +101,6 @@
 
 ## 补丁 9：实盘账户类型强制约束（影响 §8 + Phase F）
 
-- 实盘 **强制使用 Margin 账户**（Alpaca 最低 $2,000）。
+- 实盘 **强制使用 Margin 账户**（Futu 美股账户需满足券商最低资金要求，具体以 Futu/Moomoo 官方规定为准）。
 - **禁止使用 Cash 账户**：Cash 账户虽无 PDT 限制，但受 T+1 交收约束，频繁周转易触发 Good Faith Violation (GFV)。
-- PDT 风控由系统内置的 `pdt_guard.py` 负责拦截。
+- PDT 风控由系统内置的 `pdt_guard.py` 负责拦截（适用于 $25k 以下账户的日内交易限制）。

@@ -125,7 +125,7 @@ ret, data = quote_ctx.get_order_book('US.AAPL')
 
 # 获取历史K线
 from futu import KLType
-ret, data = quote_ctx.get_history_klines(
+ret, data = quote_ctx.request_history_kline(
     'US.AAPL',
     start='2024-01-01',
     end='2024-12-31',

@@ -77,3 +77,30 @@ cache:
     corporate_actions: 43200  # 12 hours
   # Only cache GET requests
   allowable_methods: [GET]
+
+# Futu OpenAPI (Real-time quotes only)
+# Note: Futu is NOT used as a historical data source due to API rate limits.
+# It serves two purposes:
+# 1. Real-time bid/ask quotes for cost model calibration (Phase E/F)
+# 2. Third backup source for emergency price checks (limited usage)
+# Historical data remains: yfinance (primary) -> tiingo (backup) -> alpha_vantage (fallback)
+futu:
+  name: futu_openapi
+  type: futu_api
+  enabled: true
+  # Connection to FutuOpenD gateway
+  host: 127.0.0.1
+  port: 11111
+  # Usage scope
+  usage:
+    historical_data: false      # DO NOT use for historical data (rate limited)
+    realtime_quotes: true       # Use for real-time bid/ask
+    trading: true               # Use for order execution
+  # Subscription limits (real-time)
+  subscription:
+    max_symbols: 100            # Max concurrent subscriptions
+    quote_types: [ORDER_BOOK]   # Bid/ask data
+  # Rate limiting for API calls
+  rate_limit:
+    orders_per_second: 10
+    quotes_per_second: 20

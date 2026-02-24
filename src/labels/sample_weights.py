@@ -115,19 +115,12 @@ class SampleWeightCalculator:
         # Build a timeline of all entry and exit dates
         # This allows us to use binary search for overlap detection
         
-        # For efficiency, convert dates to ordinals for comparison
-        # But we need to handle BusinessDay correctly, so keep as timestamps
-        
-        # Alternative: For each symbol, store sorted entry dates and exit dates separately
-        symbol_entries = {}
-        symbol_exits = {}
+        # FIX B3: Store paired intervals instead of separate entry/exit lists
+        symbol_intervals_sorted = {}
         
         for symbol, intervals in symbol_intervals.items():
-            entries = [(iv[0], iv[2]) for iv in intervals]  # (date, event_id)
-            exits = [(iv[1], iv[2]) for iv in intervals]    # (date, event_id)
-            
-            symbol_entries[symbol] = sorted(entries, key=lambda x: x[0])
-            symbol_exits[symbol] = sorted(exits, key=lambda x: x[0])
+            # Sort by entry date, keeping entry-exit pairing
+            symbol_intervals_sorted[symbol] = sorted(intervals, key=lambda x: x[0])
         
         # For each event, count overlapping symbols
         for idx, row in valid_df.iterrows():
@@ -139,15 +132,15 @@ class SampleWeightCalculator:
             # Count how many OTHER symbols have any event in [entry_date, exit_date)
             overlapping_symbols = 0
             
-            for other_symbol in symbol_entries:
+            for other_symbol in symbol_intervals_sorted:
                 if other_symbol == symbol:
                     continue
                 
                 # Check if other_symbol has ANY event overlapping [entry_date, exit_date)
                 # Using binary search: O(log m) per symbol where m = events per symbol
+                # FIX B3: Pass paired intervals instead of separate lists
                 if self._has_overlap_binary_search(
-                    symbol_entries[other_symbol],
-                    symbol_exits[other_symbol],
+                    symbol_intervals_sorted[other_symbol],
                     entry_date,
                     exit_date
                 ):
@@ -162,8 +155,7 @@ class SampleWeightCalculator:
     
     def _has_overlap_binary_search(
         self,
-        sorted_entries: List[Tuple[pd.Timestamp, any]],
-        sorted_exits: List[Tuple[pd.Timestamp, any]],
+        sorted_intervals: List[Tuple[pd.Timestamp, pd.Timestamp, any]],
         query_entry: pd.Timestamp,
         query_exit: pd.Timestamp
     ) -> bool:
@@ -173,12 +165,15 @@ class SampleWeightCalculator:
         Uses binary search for O(log n) query time.
         
         Overlap condition: entry < query_exit AND exit > query_entry
+        
+        FIX B3: Use paired intervals instead of separate entry/exit lists
+        to ensure entry[i] and exit[i] correspond to the same event.
         """
         import bisect
         
-        # Extract just the dates
-        entry_dates = [e[0] for e in sorted_entries]
-        exit_dates = [e[0] for e in sorted_exits]
+        # FIX B3: Extract dates from paired intervals (same ordering guaranteed)
+        entry_dates = [iv[0] for iv in sorted_intervals]
+        exit_dates = [iv[1] for iv in sorted_intervals]
         
         # Find the first entry that is >= query_exit
         # All entries before this could potentially overlap

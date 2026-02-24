@@ -216,10 +216,15 @@ class IntegrityManager:
             # Single day raw drift - WARN only
             logger.warn("single_day_raw_drift", raw_drift_events[0], raw_drift_events[0]['symbol'])
         else:
-        else:
+            # FIX B1: Rebuild symbol_day_drifts from raw_drift_events only
+            # (exclude adj-only events to prevent false positive freeze)
+            raw_symbol_day_drifts = {}
+            for e in raw_drift_events:
+                raw_symbol_day_drifts.setdefault(e['symbol'], []).append(e['date'])
+            
             # FIXED A25: Check for consecutive TRADING days per symbol (not calendar days)
             max_consecutive = 0
-            for symbol, dates in symbol_day_drifts.items():
+            for symbol, dates in raw_symbol_day_drifts.items():
                 sorted_dates = sorted([pd.Timestamp(d) for d in dates])
                 consecutive = 1
                 for i in range(1, len(sorted_dates)):
@@ -241,7 +246,7 @@ class IntegrityManager:
                 # ERROR: Same symbol 5+ consecutive days
                 logger.error("consecutive_raw_drift", {
                     "max_consecutive": max_consecutive,
-                    "symbols": list(symbol_day_drifts.keys())[:5]
+                    "symbols": list(raw_symbol_day_drifts.keys())[:5]
                 })
                 should_freeze = True
             elif unique_raw_symbols >= drift_threshold:

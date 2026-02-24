@@ -489,8 +489,8 @@ class FutuExecutor:
         if ret != RET_OK:
             raise QuoteError(f"Get order book failed: {data}")
         
-        bid = data['Bid'][0][0] if data['Bid'][0] else None
-        ask = data['Ask'][0][0] if data['Ask'][0] else None
+        bid = data['Bid'][0][0] if data.get('Bid') and len(data['Bid']) > 0 else None
+        ask = data['Ask'][0][0] if data.get('Ask') and len(data['Ask']) > 0 else None
         
         if bid and ask:
             return (bid + ask) / 2

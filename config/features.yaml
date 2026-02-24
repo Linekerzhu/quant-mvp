@@ -56,6 +56,9 @@ categories:
       - name: obv
         description: On-Balance Volume
         lookback: 1  # Cumulative
+      - name: volume_price_divergence
+        description: Volume-price divergence (OBV direction vs price direction)
+        lookback: 20
   
   mean_reversion:
     description: Mean reversion indicators

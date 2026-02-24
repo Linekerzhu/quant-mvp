@@ -195,8 +195,12 @@ cost_model:
   #   FINRA Fee: $0.07
   #   Total: ~$2.22 per trade
   #
-  # Monthly estimate (5-10 trades/day, 20 trading days):
-  #   ~$400-800/month in commissions + fees
+  # Monthly estimate (5-10 trades/day one-way, 20 trading days, tier 3 platform fee):
+  #   Buy: $0.99 commission + $1.00 platform + $0.07 FINRA = $2.06
+  #   Sell: $0.99 + $1.00 + $0.14 SEC + $0.02 TAF + $0.07 FINRA = $2.22
+  #   Average per trade: $2.14
+  #   5/day x 20 days = $214/month; 10/day x 20 days = $428/month
+  #   Range: ~$200-450/month in commissions + fees
 
   # --- Calibration Settings ---
   calibration:
@@ -263,13 +267,11 @@ kelly:
 # =============================================================================
 # Futu OpenAPI Configuration
 # =============================================================================
+# NOTE: Connection parameters (host, port) are read from environment variables
+#       defined in .env.example. This ensures single source of truth.
+#       See: FUTU_OPEND_HOST, FUTU_OPEND_PORT in .env
 
 futu:
-  # Connection settings
-  opend:
-    host: "127.0.0.1"             # FutuOpenD gateway host
-    port: 11111                   # Default OpenD port
-    
   # Trading environment
   trading:
     env: "SIMULATE"               # "SIMULATE" for Phase E, "REAL" for Phase F

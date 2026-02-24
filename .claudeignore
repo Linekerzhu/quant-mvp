@@ -14,6 +14,6 @@ reports/**
 *.h5
 *.db
 
-# Test fixtures are small and allowed
-tests/fixtures/*.parquet
-tests/fixtures/*.csv
+# Test fixtures are small and allowed - re-include with ! prefix
+!tests/fixtures/*.parquet
+!tests/fixtures/*.csv

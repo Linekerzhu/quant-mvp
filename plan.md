@@ -116,7 +116,7 @@
 **价格字段**：
 
 - 使用 **Adjusted Close（复权收盘价）**，复权方式为 **前复权（backward-adjusted）**，包含拆股 + 分红调整。
-- OHLC 全部使用前复权值（yfinance 默认行为）。如备源不提供复权 OHLC，则仅使用 Adj Close 计算收益率，OHLC 相关特征标记为"近似"。
+- OHLC 全部使用前复权值（yfinance 默认行为）。如备源不提供复权 OHLC，**禁用所有依赖 OHLC 的特征**（ATR、K 线形态等），仅保留基于 AdjClose 和 Volume 的特征（详见 patch 1）。
 - **原始（Raw）价格**仅用于：成交额计算（Raw Close × Volume）、滑点/成本模型（基于实际交易价格）、拆股识别（Raw vs Adj 对比）。
 
 **收益率**：
@@ -483,7 +483,7 @@ embargo_window = max(feature_lookback, execution_delay, corporate_action_latency
 - 扩展 `test_no_leakage.py` 覆盖特征层。
 - 搭建双重过拟合哨兵测试框架（`test_overfit_sentinels.py`）：
   - **哨兵 1（时间打乱）**：随机打乱时间顺序训练一次。若打乱后 AUC > 0.55，判定泄漏，阻塞。
-  - **哨兵 2（Dummy Feature）**：Phase C 训练后检查 `dummy_noise` 的 Feature Importance。若其 Gain Importance 排名或 SHAP 排名进入前 50%，判定过拟合，阻塞。（此哨兵在 Phase C 执行，但测试框架在 Phase B 搭建。）
+  - **哨兵 2（Dummy Feature）**：Phase C 训练后检查 `dummy_noise` 的 Feature Importance。若其 Gain Importance 排名或 SHAP 排名进入前 **25%**，或 `dummy_gain / median_real_feature_gain > 1.0`，判定过拟合，阻塞。（此哨兵在 Phase C 执行，但测试框架在 Phase B 搭建。）
 
 **产出**：features.parquet（含 dummy_noise 列）、labels.parquet、sample_weights.parquet、分布统计报告、有效样本量统计。
 
@@ -802,7 +802,7 @@ cost_model:
 - 拆分：数据 ¥0-800 / 算力 ¥0-600（本地优先）/ 服务 ¥100-600。
 - LightGBM + CatBoost 均为 CPU 友好型，无需 GPU。
 - 备源按量付费，仅在主源异常时启用。
-- **Futu 交易成本**：每股 $0.0049，每笔最低 $0.99，加上阶梯式平台费。假设每天 5-10 笔交易，月成本约 $100-200。
+- **Futu 交易成本**：每股 $0.0049，每笔最低 $0.99，加上阶梯式平台费。假设每天 5-10 笔单向交易、tier 3 平台费，月成本约 **$200-450**。
 
 ---
 

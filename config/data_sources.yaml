@@ -84,13 +84,13 @@ cache:
 # 1. Real-time bid/ask quotes for cost model calibration (Phase E/F)
 # 2. Third backup source for emergency price checks (limited usage)
 # Historical data remains: yfinance (primary) -> tiingo (backup) -> alpha_vantage (fallback)
+# 
+# Connection parameters are read from environment variables (see .env.example):
+#   FUTU_OPEND_HOST, FUTU_OPEND_PORT, FUTU_TRADE_PASSWORD_MD5, FUTU_SECURITY_FIRM
 futu:
   name: futu_openapi
   type: futu_api
   enabled: true
-  # Connection to FutuOpenD gateway
-  host: 127.0.0.1
-  port: 11111
   # Usage scope
   usage:
     historical_data: false      # DO NOT use for historical data (rate limited)

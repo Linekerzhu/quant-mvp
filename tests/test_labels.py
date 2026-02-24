@@ -21,8 +21,9 @@ class TestTripleBarrierLabeler:
         
         # Add required columns for testing
         df['can_trade'] = True
-        df['atr_14'] = df.groupby('symbol')['adj_close'].transform(
-            lambda x: x.rolling(14, min_periods=1).std()
+        # R7: Use atr_20 to match config (was atr_14)
+        df['atr_20'] = df.groupby('symbol')['adj_close'].transform(
+            lambda x: x.rolling(20, min_periods=1).std()
         )
         
         return df
@@ -94,7 +95,7 @@ class TestTripleBarrierLogic:
             'adj_high': [120] + [111] * 19,  # Days after entry hit profit barrier (>110)
             'adj_low': [100] * 20,
             'adj_close': [105] * 20,
-            'atr_14': [5] * 20,
+            'atr_20': [5] * 20,  # R7: updated to atr_20 to match config
             'can_trade': [True] * 20
         })
         
@@ -117,7 +118,7 @@ class TestTripleBarrierLogic:
             'adj_high': [100] * 20,
             'adj_low': [80] + [90] * 19,  # First day hits loss barrier
             'adj_close': [95] * 20,
-            'atr_14': [5] * 20,
+            'atr_20': [5] * 20,  # R7: updated to atr_20 to match config
             'can_trade': [True] * 20
         })
         
@@ -149,7 +150,7 @@ class TestNonOverlappingConstraint:
             'adj_high': [101] * 30,
             'adj_low': [99] * 30,
             'adj_close': [100] * 30,
-            'atr_14': [1.0] * 30,  # Small ATR
+            'atr_20': [1.0] * 30,  # R7: updated to atr_20
             'can_trade': [True] * 30
         })
         
@@ -187,7 +188,7 @@ class TestNonOverlappingConstraint:
             'adj_high': [101] * 30,
             'adj_low': [99] * 30,
             'adj_close': [100] * 30,
-            'atr_14': [1.0] * 30,
+            'atr_20': [1.0] * 30,  # R7: updated to atr_20
             'can_trade': [True] * 30
         })
         
@@ -218,7 +219,7 @@ class TestNonOverlappingConstraint:
                 'adj_high': [101] * 15,
                 'adj_low': [99] * 15,
                 'adj_close': [100] * 15,
-                'atr_14': [1.0] * 15,
+                'atr_20': [1.0] * 15,  # R7: updated to atr_20
                 'can_trade': [True] * 15
             }),
             pd.DataFrame({
@@ -228,7 +229,7 @@ class TestNonOverlappingConstraint:
                 'adj_high': [201] * 15,
                 'adj_low': [199] * 15,
                 'adj_close': [200] * 15,
-                'atr_14': [2.0] * 15,
+                'atr_20': [2.0] * 15,  # R7: updated to atr_20
                 'can_trade': [True] * 15
             })
         ]).reset_index(drop=True)

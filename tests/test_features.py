@@ -47,8 +47,8 @@ class TestFeatureEngineer:
         for window in [5, 20, 60]:
             assert f'rv_{window}d' in result.columns
         
-        # Check ATR
-        assert 'atr_14' in result.columns
+        # Check ATR (R7: updated to atr_20 to match config)
+        assert 'atr_20' in result.columns
     
     def test_volume_features(self, engineer, mock_prices):
         """Test volume feature calculation."""

@@ -148,7 +148,7 @@ class TestFeatureLayerLeakage:
             'adj_close': [101 + i for i in range(20)],
             'volume': [1000] * 20,
             'can_trade': [True] * 20,
-            'atr_14': [2.0] * 20
+            'atr_20': [2.0] * 20  # R7: updated to atr_20 to match config
         })
         return df
     
@@ -186,7 +186,7 @@ class TestFeatureLayerLeakage:
         idx = 10
         
         # ATR should only use data up to index 10
-        atr = result.iloc[idx]['atr_14']
+        atr = result.iloc[idx]['atr_20']  # R7: updated to atr_20
         
         # ATR should be finite and based on historical data
         assert np.isfinite(atr), "ATR is not finite"

@@ -62,7 +62,7 @@ class TestPhaseAtoBPipeline:
         # Verify features created
         assert 'returns_5d' in df.columns
         assert 'rsi_14' in df.columns
-        assert 'atr_14' in df.columns
+        assert 'atr_20' in df.columns  # R7: updated to atr_20 to match config
         assert 'dummy_noise' in df.columns
         
         # Phase B Step 2: Regime Detection (optional)

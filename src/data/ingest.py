@@ -95,7 +95,9 @@ class YFinanceSource(DataSource):
         Fetches both adjusted and raw prices for proper corporate action detection.
         """
         all_data = []
+        # FIX C2: Track max consecutive failures (not just tail)
         failures = 0
+        max_consecutive = 0
         
         for symbol in symbols:
             try:
@@ -110,6 +112,7 @@ class YFinanceSource(DataSource):
                 if adj_hist.empty:
                     logger.warn("data_fetch_empty", {"symbol": symbol, "source": "yfinance", "type": "adj"})
                     failures += 1
+                    max_consecutive = max(max_consecutive, failures)
                     continue
                 
                 time.sleep(0.5)  # Rate limiting between calls
@@ -120,9 +123,11 @@ class YFinanceSource(DataSource):
                 if raw_hist.empty:
                     logger.warn("data_fetch_empty", {"symbol": symbol, "source": "yfinance", "type": "raw"})
                     failures += 1
+                    max_consecutive = max(max_consecutive, failures)
                     continue
                 
-                # Reset failure count on success
+                # FIX C2: Reset failure count on success, track max
+                max_consecutive = max(max_consecutive, failures)
                 failures = 0
                 
                 # Merge adjusted and raw data
@@ -177,9 +182,11 @@ class YFinanceSource(DataSource):
             except Exception as e:
                 logger.error("data_fetch_error", {"symbol": symbol, "error": str(e), "source": "yfinance"})
                 failures += 1
+                max_consecutive = max(max_consecutive, failures)
                 continue
         
-        self.consecutive_failures = failures
+        # FIX C2: Store max consecutive failures
+        self.consecutive_failures = max_consecutive
         
         if not all_data:
             return None
@@ -424,6 +431,24 @@ class DualSourceIngest:
         data = source.fetch(symbols, start, end)
         
         if data is not None and not data.empty:
+            # FIX B2: Check coverage before accepting data
+            coverage = data['symbol'].nunique() / len(symbols)
+            if coverage < 0.95:  # >5% symbols missing
+                logger.warn("low_coverage", {
+                    "coverage": round(coverage, 3),
+                    "requested": len(symbols),
+                    "received": data['symbol'].nunique()
+                })
+                # Check if we should failover due to low coverage
+                if source_name == "primary" and self.primary.should_failover():
+                    logger.warn("low_coverage_triggering_failover", {
+                        "consecutive_failures": self.primary.consecutive_failures
+                    })
+                    # Fall through to failover logic below
+                else:
+                    # Accept partial data but warn
+                    logger.warn("partial_data_accepted", {"coverage": round(coverage, 3)})
+            
             # FIX B2: Correct log content per Patch 1
             if source_name == "backup" and not source.provides_adj_ohlc:
                 logger.warn("feature_degradation", {
@@ -433,19 +458,23 @@ class DualSourceIngest:
                     "action": "ohlc_features_disabled_per_patch1"
                 })
             
-            logger.info("ingest_success", {
-                "rows": len(data),
-                "symbols": data['symbol'].nunique(),
-                "source": source_name
-            })
-            
-            # Reset backup flag on primary success
-            if source_name == "primary":
-                self.using_backup = False
-            
-            return data
+            # Only return if coverage is acceptable OR we're not triggering failover
+            if coverage >= 0.95 or (source_name == "backup"):
+                logger.info("ingest_success", {
+                    "rows": len(data),
+                    "symbols": data['symbol'].nunique(),
+                    "coverage": round(coverage, 3),
+                    "source": source_name
+                })
+                
+                # Reset backup flag on primary success
+                if source_name == "primary":
+                    self.using_backup = False
+                
+                return data
+            # else: fall through to failover
         
-        # Primary failed, try failover
+        # Primary failed or low coverage, try failover
         if source_name == "primary":
             logger.warn("primary_source_failed", {
                 "consecutive_failures": self.primary.consecutive_failures,
@@ -465,11 +494,13 @@ class DualSourceIngest:
                     "failover_count": self.failover_count
                 })
                 
-                # Log feature degradation
+                # FIX B3: Update failover path log to match primary path
                 logger.warn("feature_degradation", {
                     "reason": "backup_source_active",
                     "backup_limitations": "provides_adj_ohlc=false",
-                    "disabled_features": ["ohlc_based_features_degraded"]
+                    "disabled_features": ["atr_14", "rsi_14", "macd_line", "macd_signal", "pv_correlation_5d"],
+                    "retained_features": ["returns_*d", "rv_*d", "relative_volume_20d", "obv", "sma/ema_zscore"],
+                    "action": "ohlc_features_disabled_per_patch1"
                 })
                 
                 return data

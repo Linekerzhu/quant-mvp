@@ -86,10 +86,17 @@ class DailyJob:
     
     def _step_ingest(self, trade_date: str):
         """Step 1: Data ingestion."""
-        # Get universe symbols
-        universe_info = self.universe.build_universe(
-            pd.DataFrame()  # Would load existing data
-        )
+        # FIX C3: Load existing data or use S&P 500 list for universe building
+        prev_date = (pd.Timestamp(trade_date) - timedelta(days=1)).strftime('%Y-%m-%d')
+        existing_data = read_parquet_safe(f"data/raw/daily_{prev_date}.parquet")
+        
+        # Get universe symbols (uses existing data or falls back to S&P 500 list)
+        universe_info = self.universe.build_universe(existing_data)
+        
+        # Handle empty universe
+        if not universe_info['symbols']:
+            logger.error("empty_universe", {"trade_date": trade_date})
+            raise ValueError(f"No symbols in universe for {trade_date}")
         
         # Ingest last 5 days (for feature calculation)
         end = pd.Timestamp(trade_date)

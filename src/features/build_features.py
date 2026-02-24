@@ -295,7 +295,9 @@ class FeatureEngineer:
                    'ingestion_timestamp', 'source_provides_adj_ohlc',
                    'features_valid',
                    'label', 'label_barrier', 'label_return', 'label_holding_days', 
-                   'event_valid', 'sample_weight']
+                   'event_valid', 'sample_weight',
+                   # FIX A1: Exclude RegimeDetector string columns (use numeric scores instead)
+                   'regime_volatility', 'regime_trend', 'regime_combined']
         
         # Defensive assertion: detect any label-related columns
         label_cols = [col for col in df.columns if col.startswith('label')]
@@ -446,6 +448,10 @@ class FeatureEngineer:
         # First, get unique dates and their vix_proxy values
         date_vol_proxy = df.groupby('date')['vix_proxy_5d'].first().reset_index()
         date_vol_proxy['vix_change_5d'] = date_vol_proxy['vix_proxy_5d'].pct_change(periods=5)
+        
+        # FIX C1: Prevent duplicate columns on re-entry
+        if 'vix_change_5d' in df.columns:
+            df = df.drop(columns=['vix_change_5d'])
         
         # Merge back to df
         df = df.merge(date_vol_proxy[['date', 'vix_change_5d']], on='date', how='left')

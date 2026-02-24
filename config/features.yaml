@@ -56,9 +56,16 @@ categories:
       - name: obv
         description: On-Balance Volume
         lookback: 1  # Cumulative
-      - name: volume_price_divergence
-        description: Volume-price divergence (OBV direction vs price direction)
-        lookback: 20
+      # FIX B1: Rename to match actual output from build_features.py
+      - name: pv_divergence_bull
+        description: Price up volume down (weak bullish signal)
+        lookback: 5
+      - name: pv_divergence_bear
+        description: Price down volume down (weak bearish signal)
+        lookback: 5
+      - name: pv_correlation_5d
+        description: Price-volume correlation (5-day rolling)
+        lookback: 5
   
   mean_reversion:
     description: Mean reversion indicators
@@ -82,11 +89,15 @@ categories:
       - name: market_breadth
         description: Advance/Decline ratio
         lookback: 1
-      - name: regime_volatility
-        description: Volatility regime (low/med/high)
+      # FIX B1: Use numeric scores instead of string labels
+      - name: regime_vol_score
+        description: Volatility regime score (continuous, 0-1)
         lookback: 20
-      - name: regime_trend
-        description: Trend regime (ADX-based)
+      - name: regime_trend_score
+        description: Trend regime score (continuous, 0-1)
+        lookback: 14
+      - name: adx_14
+        description: Average Directional Index (14)
         lookback: 14
 
 # Dummy feature for overfitting detection (Plan v4)
@@ -110,3 +121,8 @@ importance:
     - shap
   tracking: true
   history_days: 252  # Keep 1 year of importance history
+
+# Notes on feature naming alignment:
+# - build_features.py outputs: pv_divergence_bull, pv_divergence_bear, pv_correlation_5d
+# - build_features.py outputs: regime_vol_score, regime_trend_score, adx_14 (numeric)
+# - String columns (regime_volatility, regime_trend, regime_combined) are excluded in _get_feature_columns

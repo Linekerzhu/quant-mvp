@@ -302,20 +302,22 @@ class TestTimeShuffleSentinel:
         sentinel = TimeShuffleSentinel(n_shuffles=3)
         passed, results = sentinel.run_test(X, y)
         
-        assert 'baseline_accuracy' in results
-        assert 'shuffle_mean' in results
-        assert 'shuffle_max' in results
-        assert 'shuffle_accuracies' in results
+        # F2 Fix: Updated key names from accuracy to auc
+        assert 'baseline_auc' in results
+        assert 'shuffle_mean_auc' in results
+        assert 'shuffle_max_auc' in results
+        assert 'shuffle_aucs' in results
         
-        print(f"Baseline accuracy: {results['baseline_accuracy']:.4f}")
-        print(f"Shuffle mean: {results['shuffle_mean']:.4f}")
-        print(f"Shuffle max: {results['shuffle_max']:.4f}")
+        print(f"Baseline AUC: {results['baseline_auc']:.4f}")
+        print(f"Shuffle mean AUC: {results['shuffle_mean_auc']:.4f}")
+        print(f"Shuffle max AUC: {results['shuffle_max_auc']:.4f}")
     
     def test_shuffle_thresholds(self):
         """Test default thresholds are set correctly."""
         sentinel = TimeShuffleSentinel()
-        assert sentinel.MEAN_ACCURACY_THRESHOLD == 0.55
-        assert sentinel.MAX_ACCURACY_THRESHOLD == 0.58
+        # F3 Fix: Updated attribute names from ACCURACY to AUC
+        assert sentinel.MEAN_AUC_THRESHOLD == 0.55
+        assert sentinel.MAX_AUC_THRESHOLD == 0.58
 
 
 class TestSentinelIntegration:

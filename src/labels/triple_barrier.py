@@ -155,6 +155,10 @@ class TripleBarrierLabeler:
         if pd.isna(symbol_df.loc[idx, self.atr_col]):
             return False, 'missing_atr'
         
+        # FIX B1: Defense-in-depth - check features_valid if available
+        if 'features_valid' in symbol_df.columns and not symbol_df.loc[idx, 'features_valid']:
+            return False, 'features_invalid'
+        
         # Must not be suspended
         if symbol_df.loc[idx, 'can_trade'] == False:
             return False, 'suspended'

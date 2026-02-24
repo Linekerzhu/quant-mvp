@@ -255,15 +255,18 @@ class FeatureEngineer:
         gain = (delta.where(delta > 0, 0)).rolling(window=window, min_periods=1).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(window=window, min_periods=1).mean()
         
-        # FIX A1: When loss=0 (all gains), RSI should be 100 (max strength)
+        # FIX A1 (R13): Handle edge cases for RSI extremes
+        # When loss=0 (all gains), RSI should be 100 (max strength)
         # When gain=0 (all losses), RSI should be 0 (min strength)
+        # When both=0 (warmup/constant price), keep NaN (not 0 or 100)
         rs = gain / loss.replace(0, np.nan)  # Avoid div-by-zero warning
         rsi = 100 - (100 / (1 + rs))
         
-        # FIX A1: Explicitly set RSI=100 when loss=0 (pure uptrend)
-        # and RSI=0 when gain=0 (pure downtrend)
-        rsi = np.where(loss == 0, 100.0, rsi)  # All gains -> RSI=100
-        rsi = np.where(gain == 0, 0.0, rsi)    # All losses -> RSI=0
+        # FIX A1 (R13): Only set RSI extremes when there's actual movement
+        # NOT when both gain and loss are 0 (constant price or warmup)
+        rsi = np.where((loss == 0) & (gain > 0), 100.0, rsi)  # Pure uptrend
+        rsi = np.where((gain == 0) & (loss > 0), 0.0, rsi)    # Pure downtrend
+        # Both=0: RSI stays NaN (from rs=NaN), features_valid will filter
         
         return rsi  # Keep NaN for initial values; features_valid handles this
     

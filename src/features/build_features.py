@@ -586,6 +586,10 @@ class FeatureEngineer:
         ).reset_index()
         date_breadth.columns = ['date', 'market_breadth']
         
+        # P2 (R26-B1): Drop existing market_breadth before merge (prevent duplicate columns)
+        if 'market_breadth' in df.columns:
+            df = df.drop(columns=['market_breadth'])
+        
         # Broadcast back to all rows (including backup sources)
         df = df.merge(date_breadth, on='date', how='left')
         

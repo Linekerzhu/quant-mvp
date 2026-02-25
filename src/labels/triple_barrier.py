@@ -170,8 +170,19 @@ class TripleBarrierLabeler:
             return False, 'features_invalid'
         
         # Must not be suspended
-        if symbol_df.loc[idx, 'can_trade'] == False:
+        # P1 (R26-A2): Use != True instead of == False for NaN-safety
+        if symbol_df.loc[idx, 'can_trade'] != True:
             return False, 'suspended'
+        
+        # P1 (R26-A1): Check entry day (T+1) data quality
+        # Trigger day features_valid doesn't guarantee entry day price is valid
+        entry_idx = idx + 1
+        if entry_idx >= len(symbol_df):
+            return False, 'no_entry_day_data'
+        
+        entry_price = symbol_df.loc[entry_idx, 'adj_open']
+        if pd.isna(entry_price) or entry_price <= 0:
+            return False, 'invalid_entry_price'
         
         # Must have enough data for max holding period
         if idx + self.max_holding_days >= len(symbol_df):

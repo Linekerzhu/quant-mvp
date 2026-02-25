@@ -2,7 +2,7 @@
 # Feature registry with versioning
 
 # Feature version - increment on any change
-version: 2  # R19 B2: Updated from v1 to reflect R17-R19 changes
+version: 3  # R23 A2: Added requires_ohlc metadata
 
 # Feature categories
 categories:
@@ -12,26 +12,31 @@ categories:
       - name: returns_5d
         description: 5-day log returns
         lookback: 5
+        requires_ohlc: false  # Uses adj_close only
       - name: returns_10d
         description: 10-day log returns
         lookback: 10
+        requires_ohlc: false
       - name: returns_20d
         description: 20-day log returns
         lookback: 20
+        requires_ohlc: false
       - name: returns_60d
         description: 60-day log returns
         lookback: 60
+        requires_ohlc: false
       - name: rsi_14
         description: RSI(14)
         lookback: 14
-      # R19 B2: Replaced dollar-scale with normalized versions
+        requires_ohlc: true  # Requires reliable OHLC for calculation
       - name: macd_line_pct
         description: MACD line as % of price (normalized)
         lookback: 26
-      # R22 B2: Replaced signal_pct with histogram_pct (r=0.964 → 0.333)
+        requires_ohlc: true  # Requires OHLC for MACD calculation
       - name: macd_histogram_pct
         description: MACD histogram (line - signal) as % of price
         lookback: 35
+        requires_ohlc: true  # Requires OHLC for MACD calculation
   
   volatility:
     description: Volatility indicators
@@ -39,14 +44,15 @@ categories:
       - name: rv_5d
         description: Realized volatility (5-day)
         lookback: 5
+        requires_ohlc: false  # Uses adj_close only
       - name: rv_20d
         description: Realized volatility (20-day)
         lookback: 20
+        requires_ohlc: false
       - name: rv_60d
         description: Realized volatility (60-day)
         lookback: 60
-      # R19 B3: Removed atr_20_pct (r=0.897 with rv_20d)
-      # Use rv_20d as primary volatility measure instead
+        requires_ohlc: false
   
   volume:
     description: Volume-based indicators
@@ -54,16 +60,19 @@ categories:
       - name: relative_volume_20d
         description: Volume vs 20-day average
         lookback: 20
-      # R19 B2: Removed obv (500x cross-symbol variance)
+        requires_ohlc: false  # Uses volume only
       - name: pv_divergence_bull
         description: Price up volume down (weak bullish signal)
         lookback: 5
+        requires_ohlc: false  # Uses adj_close and volume
       - name: pv_divergence_bear
         description: Price down volume down (weak bearish signal)
         lookback: 5
+        requires_ohlc: false
       - name: pv_correlation_5d
         description: Price-volume correlation (5-day rolling)
         lookback: 5
+        requires_ohlc: true  # Requires reliable OHLC for correlation
   
   mean_reversion:
     description: Mean reversion indicators
@@ -71,10 +80,11 @@ categories:
       - name: price_vs_sma20_zscore
         description: Price vs SMA(20) z-score
         lookback: 20
+        requires_ohlc: false  # Uses adj_close only
       - name: price_vs_sma60_zscore
         description: Price vs SMA(60) z-score
         lookback: 60
-      # R19 B2: Removed price_vs_ema20_zscore (r=0.97 with sma20_zscore)
+        requires_ohlc: false
   
   market_regime:
     description: Market regime indicators (soft features)
@@ -82,28 +92,30 @@ categories:
       - name: vix_change_5d
         description: VIX 5-day change rate (clipped to [-2, 2])
         lookback: 5
+        requires_ohlc: false  # Uses adj_close only
       - name: market_breadth
         description: Advance/Decline ratio
         lookback: 1
+        requires_ohlc: false  # Uses adj_close only
       - name: adx_14
         description: Average Directional Index (14)
         lookback: 14
-      # R19 B2: Removed regime_vol_score (r=0.90 with rv_20d)
-      # R19 B2: Removed regime_trend_score (r=0.82 with adx_14)
+        requires_ohlc: true  # Requires OHLC for ADX calculation
 
 # Dummy feature for overfitting detection (Plan v4)
 dummy_features:
   - name: dummy_noise
     description: Gaussian white noise for overfitting detection
     distribution: "N(0, 1)"
-    seed: 42  # For reproducibility
-    usage: sentinel_only  # Do not use in actual prediction
+    seed: 42
+    usage: sentinel_only
+    requires_ohlc: false  # Synthetic feature
 
 # Feature stability monitoring
 stability:
   monitoring: true
-  ic_lookback: 60  # Days for IC calculation
-  drift_threshold: 0.30  # Alert if IC correlation drops 30%
+  ic_lookback: 60
+  drift_threshold: 0.30
 
 # Feature importance tracking
 importance:
@@ -111,18 +123,24 @@ importance:
     - gain
     - shap
   tracking: true
-  history_days: 252  # Keep 1 year of importance history
+  history_days: 252
 
 # =============================================================================
 # Changelog
 # =============================================================================
-# R19 (v1 → v2):
-# Removed: macd_line, macd_signal, atr_20, obv, regime_vol_score, 
-#          regime_trend_score, price_vs_ema20_zscore
-# Added: macd_line_pct, macd_signal_pct
+# R23 (v3):
+# Added: requires_ohlc field to all features
+# Purpose: Meta-driven exemption list for backup sources
+# 
+# Features requiring OHLC (exempted for backup sources):
+# - rsi_14, macd_line_pct, macd_histogram_pct
+# - pv_correlation_5d, adx_14
 #
 # R22 (v2):
 # Replaced: macd_signal_pct → macd_histogram_pct
-# Reason: signal_pct has r=0.964 with line_pct (highly redundant)
-#         histogram_pct has r=0.333 with line_pct (better independence)
+#
+# R19 (v1 → v2):
+# Removed: macd_line, macd_signal, atr_20, obv, regime_vol_score,
+#          regime_trend_score, price_vs_ema20_zscore
+# Added: macd_line_pct, macd_signal_pct
 # =============================================================================

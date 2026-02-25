@@ -33,6 +33,35 @@ class FeatureEngineer:
         
         self.version = self.config['version']
         self.dummy_seed = 42  # For reproducibility
+        
+        # P1-A2 (R23): Build OHLC exemption list from YAML meta
+        self.ohlc_exempt_features = self._build_ohlc_exempt_list()
+    
+    def _build_ohlc_exempt_list(self) -> List[str]:
+        """
+        P1-A2 (R23): Build list of features requiring OHLC from YAML.
+        
+        This replaces hardcoded exemption list with meta-driven approach.
+        """
+        exempt_features = []
+        
+        # Iterate through all categories
+        for category_name, category_data in self.config.get('categories', {}).items():
+            for feature in category_data.get('features', []):
+                if feature.get('requires_ohlc', False):
+                    exempt_features.append(feature['name'])
+        
+        # Also check dummy features
+        for feature in self.config.get('dummy_features', []):
+            if feature.get('requires_ohlc', False):
+                exempt_features.append(feature['name'])
+        
+        logger.info("ohlc_exempt_features_built", {
+            "count": len(exempt_features),
+            "features": exempt_features
+        })
+        
+        return exempt_features
     
     def _validate_input(self, df: pd.DataFrame) -> None:
         """Validate input DataFrame has required columns."""
@@ -113,9 +142,9 @@ class FeatureEngineer:
         if has_source_flag and len(backup_df) > 0:
             # Mixed batch: only check features for backup source
             backup_valid_mask = df['source_provides_adj_ohlc'] == False
+            # P1-A2 (R23): Use meta-driven exemption list instead of hardcoded
             backup_feature_cols = [c for c in feature_cols 
-                                   if c not in ['rsi_14', 'macd_line_pct', 'macd_histogram_pct', 
-                                                'pv_correlation_5d', 'adx_14']]
+                                   if c not in self.ohlc_exempt_features]
             
             # Primary source: check all features
             primary_valid_mask = df['source_provides_adj_ohlc'] == True

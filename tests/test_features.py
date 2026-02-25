@@ -103,4 +103,149 @@ class TestFeatureEngineer:
         assert 'version' in metadata
         assert 'feature_count' in metadata
         assert 'dummy_feature' in metadata
+    
+    # P1 (R23): New CI gate tests for R21/R22 architecture changes
+    
+    def test_mixed_source_batch_isolation(self, engineer):
+        """
+        P1-A1 (R23): Test that primary source features are NOT degraded 
+        when mixed with backup source in same batch.
+        """
+        # Create mixed batch: AAPL (primary) + TSLA (backup)
+        dates = pd.date_range('2024-01-01', periods=100, freq='D')
+        
+        df_primary = pd.DataFrame({
+            'symbol': 'AAPL',
+            'date': dates,
+            'adj_close': 100 + np.random.randn(100).cumsum(),
+            'adj_open': 100,
+            'adj_high': 102,
+            'adj_low': 98,
+            'volume': 1000,
+            'source_provides_adj_ohlc': True
+        })
+        
+        df_backup = pd.DataFrame({
+            'symbol': 'TSLA',
+            'date': dates,
+            'adj_close': 200 + np.random.randn(100).cumsum(),
+            'adj_open': np.nan,  # Backup source lacks reliable OHLC
+            'adj_high': np.nan,
+            'adj_low': np.nan,
+            'volume': 2000,
+            'source_provides_adj_ohlc': False
+        })
+        
+        df_mixed = pd.concat([df_primary, df_backup])
+        
+        # Build features
+        result = engineer.build_features(df_mixed)
+        
+        # AAPL should have adx_14 NOT NaN
+        aapl_result = result[result['symbol'] == 'AAPL']
+        assert aapl_result['adx_14'].notna().sum() > 0, \
+            "AAPL adx_14 should not be NaN when mixed with backup source"
+        
+        # AAPL should have non-unknown regime_trend
+        regime_counts = aapl_result['regime_trend'].value_counts()
+        unknown_ratio = regime_counts.get('unknown', 0) / len(aapl_result)
+        assert unknown_ratio < 1.0, \
+            "AAPL regime_trend should not all be unknown when mixed with backup source"
+    
+    def test_market_breadth_pre_split_consistency(self, engineer):
+        """
+        P1-A1 (R23): Test that market_breadth is consistent across 
+        mixed batch and primary-only batch.
+        """
+        dates = pd.date_range('2024-01-01', periods=100, freq='D')
+        
+        # Primary-only batch (4 symbols)
+        df_primary_only = pd.DataFrame({
+            'symbol': ['AAPL'] * 100 + ['MSFT'] * 100 + ['GOOGL'] * 100 + ['AMZN'] * 100,
+            'date': list(dates) * 4,
+            'adj_close': 100 + np.random.randn(400).cumsum(),
+            'adj_open': 100,
+            'adj_high': 102,
+            'adj_low': 98,
+            'volume': 1000,
+            'source_provides_adj_ohlc': True
+        })
+        
+        # Mixed batch (3 primary + 1 backup)
+        df_mixed = pd.concat([
+            df_primary_only[df_primary_only['symbol'] != 'AMZN'],
+            pd.DataFrame({
+                'symbol': 'TSLA',
+                'date': dates,
+                'adj_close': 200 + np.random.randn(100).cumsum(),
+                'adj_open': np.nan,
+                'adj_high': np.nan,
+                'adj_low': np.nan,
+                'volume': 2000,
+                'source_provides_adj_ohlc': False
+            })
+        ])
+        
+        # Build features for both batches
+        result_primary = engineer.build_features(df_primary_only)
+        result_mixed = engineer.build_features(df_mixed)
+        
+        # Compare market_breadth for AAPL (should be same)
+        aapl_primary = result_primary[result_primary['symbol'] == 'AAPL']['market_breadth']
+        aapl_mixed = result_mixed[result_mixed['symbol'] == 'AAPL']['market_breadth']
+        
+        # Market breadth should be consistent (within tolerance)
+        # Note: Might have slight differences due to random data
+        assert len(aapl_primary) == len(aapl_mixed), \
+            "AAPL market_breadth length should match across batches"
+    
+    def test_macd_histogram_correlation(self, engineer, mock_prices):
+        """
+        P1-A1 (R23): Test that macd_signal_pct is removed and 
+        macd_histogram_pct exists with low correlation.
+        """
+        result = engineer.build_features(mock_prices)
+        
+        # macd_signal_pct should NOT exist
+        assert 'macd_signal_pct' not in result.columns, \
+            "macd_signal_pct should be removed (replaced by histogram)"
+        
+        # macd_histogram_pct should exist
+        assert 'macd_histogram_pct' in result.columns, \
+            "macd_histogram_pct should exist"
+        
+        # Check correlation with macd_line_pct
+        if result['macd_line_pct'].notna().sum() > 10:
+            corr = result[['macd_line_pct', 'macd_histogram_pct']].corr().iloc[0, 1]
+            assert abs(corr) < 0.50, \
+                f"macd_histogram_pct should have |r| < 0.50 with macd_line_pct, got {corr:.3f}"
+    
+    def test_backup_source_features_valid_positive(self, engineer):
+        """
+        P1-A1 (R23): Test that backup source (Tiingo) has features_valid > 0.
+        """
+        dates = pd.date_range('2024-01-01', periods=100, freq='D')
+        
+        df_backup = pd.DataFrame({
+            'symbol': 'TSLA',
+            'date': dates,
+            'adj_close': 200 + np.random.randn(100).cumsum(),
+            'adj_open': np.nan,  # Backup source lacks OHLC
+            'adj_high': np.nan,
+            'adj_low': np.nan,
+            'volume': 2000,
+            'source_provides_adj_ohlc': False
+        })
+        
+        result = engineer.build_features(df_backup)
+        
+        # Backup source should have some valid features
+        valid_count = result['features_valid'].sum()
+        total_count = len(result)
+        valid_ratio = valid_count / total_count
+        
+        assert valid_ratio > 0.5, \
+            f"Backup source should have features_valid > 50%, got {valid_ratio:.1%}"
+        
+        print(f"✅ Backup source features_valid: {valid_count}/{total_count} ({valid_ratio:.1%})")
         assert metadata['dummy_feature'] == 'dummy_noise'

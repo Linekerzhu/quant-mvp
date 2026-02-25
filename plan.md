@@ -508,6 +508,21 @@ embargo_window = max(feature_lookback, execution_delay, corporate_action_latency
 
 ### Phase C：建模与严格验证（单模型 MVP）
 
+#### OR5 架构契约（S0 级前置条件）
+
+> **审计基线**: commit `7fddb78` | **审计日期**: 2026-02-25
+>
+> 以下四项契约为 Phase C 的**硬性门槛条件**，违反即一票否决。
+> 详细契约见 `docs/OR5_CONTRACT.md`。
+
+| 契约 | 内容 | 状态 |
+|------|------|------|
+| **契约 1: LightGBM 参数锁死** | `max_depth=3, num_leaves=7, min_data_in_leaf=200, feature_fraction=0.5` | ✅ 已落实 |
+| **契约 2: Meta-Labeling 架构** | Primary Model → Meta-Features → Secondary Model，LGB 不直接预测方向 | ⏳ Phase C 实施 |
+| **契约 3: FracDiff 特征基座** | d=0.4 分数阶差分，解决价格非平稳性，ADF test p<0.05 | ⏳ Phase C 实施 |
+| **契约 4: CPCV 手写切分器** | Purge + Embargo 逻辑手写，禁止 sklearn KFold | ⏳ Phase C 实施 |
+| **拨备: 回测扣减** | CAGR -3%, MDD +10% (Maximum Pessimism Principle) | ⏳ Phase C 实施 |
+
 **任务**：
 
 - 训练 LightGBM 单模型（传入 sample_weight，超参从 `config/training.yaml` 读取）。

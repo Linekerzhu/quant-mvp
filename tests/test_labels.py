@@ -60,8 +60,11 @@ class TestTripleBarrierLabeler:
             # Labels should be -1, 0, or 1 (unified semantics)
             assert valid['label'].isin([-1, 0, 1]).all()
             
-            # Barrier should be one of profit/loss/time
-            assert valid['label_barrier'].isin(['profit', 'loss', 'time']).all()
+            # Barrier should be one of profit/loss/time/gap/collision (OR5)
+            assert valid['label_barrier'].isin([
+                'profit', 'loss', 'time',
+                'profit_gap', 'loss_gap', 'loss_collision'
+            ]).all()
             
             # Holding days should be positive
             assert (valid['label_holding_days'] > 0).all()

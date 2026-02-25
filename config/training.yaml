@@ -35,20 +35,35 @@ label:
     +1: 1
 
 # LightGBM parameters
+# OR5 HOTFIX: Anti-Kaggle Hardening (HF-2)
+# These parameters are LOCKED - any optimization must stay within bounds
+# Violation = Phase C veto per OR5 Contract
 lightgbm:
   objective: binary
   metric: auc
   boosting_type: gbdt
-  num_leaves: 31
-  learning_rate: 0.05
-  feature_fraction: 0.8
-  bagging_fraction: 0.8
+  
+  # OR5 RED LINE PARAMETERS (locked)
+  max_depth: 3  # LOCKED -严禁超过 3
+  num_leaves: 7  # LOCKED - <= 2^3 - 1
+  min_data_in_leaf: 200  # LOCKED - 强制统计显著性
+  feature_fraction: 0.5  # LOCKED - 双重随机化，打破共线性
+  bagging_fraction: 0.7  # LOCKED - 双重随机化
   bagging_freq: 5
+  learning_rate: 0.01  # LOCKED - 降速学习
+  lambda_l1: 1.0  # LOCKED - 特征稀疏化
+  n_estimators: 500  # Increased to compensate for low learning_rate
+  
   verbose: -1
-  n_estimators: 100
   
   # Early stopping
   early_stopping_rounds: 50
+  
+  # ALLOWED SEARCH SPACE (for hyperparameter tuning only)
+  # max_depth ∈ {2, 3}
+  # num_leaves ∈ {3, 5, 7}
+  # min_data_in_leaf ∈ {100, 200, 300}
+  # Values outside these ranges are FORBIDDEN even if CV improves
 
 # CatBoost parameters (for Phase C+)
 catboost:

@@ -137,9 +137,11 @@ class TripleBarrierLabeler:
             "total_valid_events": int(valid_count),
             "rejected_events": rejected_count,
             "overlap_rejected": overlap_rejected,
-            "profit_hits": (df['label_barrier'] == 'profit').sum(),
-            "loss_hits": (df['label_barrier'] == 'loss').sum(),
-            "time_hits": (df['label_barrier'] == 'time').sum()
+            "profit_hits": int((df['label_barrier'].isin(['profit', 'profit_gap'])).sum()),
+            "loss_hits": int((df['label_barrier'].isin(['loss', 'loss_gap', 'loss_collision'])).sum()),
+            "time_hits": int((df['label_barrier'] == 'time').sum()),
+            "gap_events": int((df['label_barrier'].isin(['loss_gap', 'profit_gap'])).sum()),
+            "collision_events": int((df['label_barrier'] == 'loss_collision').sum())
         })
         
         return df
@@ -296,25 +298,61 @@ class TripleBarrierLabeler:
             
             exit_date = symbol_df.loc[idx, 'date']
             
-            # P1 (R25-A3) DOCUMENTATION: Profit-first bias on same-day dual trigger
-            # When high >= profit_barrier AND low <= loss_barrier on the same day,
-            # this code returns 'profit' (profit-first strategy). Without intraday
-            # tick data, we cannot determine the actual trigger order.
-            # Impact: <0.1% of events (extreme volatility days like earnings/FOMC).
-            # Phase C should monitor dual-trigger event ratio as data quality metric.
+            # ============================================================
+            # OR5 HOTFIX: Maximum Pessimism Principle (HF-1)
+            # ============================================================
+            # Execution priority: Gap > Collision > Normal
+            # Pessimism: loss > profit in all ambiguous cases
+            # ============================================================
             
-            # Check profit barrier
-            if day_high >= profit_barrier:
-                exit_price = profit_barrier
-                ret = np.log(exit_price / entry_price)  # B24: Log return
-                # Unified label semantics: 1=profit, -1=loss, 0=time
-                return (1, 'profit', ret, day, exit_date)
+            # Get day open for gap detection
+            if has_adj_ohlc:
+                day_open = symbol_df.loc[idx, 'adj_open']
+            else:
+                day_open = symbol_df.loc[idx, 'adj_close']
             
-            # Check loss barrier
+            # Skip if day_open is NaN (can't determine gap)
+            if pd.isna(day_open):
+                continue
+            
+            # STEP 1: Gap Execution (跳空执行 - 最优先)
+            # If open already crossed barrier, use actual open price (not barrier)
+            # Loss gap takes priority over profit gap (pessimism)
+            
+            if day_open <= loss_barrier:
+                # 开盘直接跳穿止损 → 用实际开盘价结算（更惨）
+                exit_price = day_open
+                ret = np.log(exit_price / entry_price)
+                return (-1, 'loss_gap', ret, day, exit_date)
+            
+            if day_open >= profit_barrier:
+                # 开盘直接跳穿止盈 → 用实际开盘价结算（比barrier更好但也更真实）
+                exit_price = day_open
+                ret = np.log(exit_price / entry_price)
+                return (1, 'profit_gap', ret, day, exit_date)
+            
+            # STEP 2: Collision Detection (同日双穿检测)
+            # If both barriers hit same day, force loss (pessimism)
+            # Day-frequency can't determine intraday order
+            
+            if day_high >= profit_barrier and day_low <= loss_barrier:
+                # 同日双穿 → 强制止损（最悲观原则）
+                exit_price = loss_barrier
+                ret = np.log(exit_price / entry_price)
+                return (-1, 'loss_collision', ret, day, exit_date)
+            
+            # STEP 3: Normal Path (正常路径)
+            # Loss check before profit check (pessimism)
+            
             if day_low <= loss_barrier:
                 exit_price = loss_barrier
                 ret = np.log(exit_price / entry_price)  # B24: Log return
                 return (-1, 'loss', ret, day, exit_date)
+            
+            if day_high >= profit_barrier:
+                exit_price = profit_barrier
+                ret = np.log(exit_price / entry_price)  # B24: Log return
+                return (1, 'profit', ret, day, exit_date)
         
         # Time barrier hit
         exit_idx = min(entry_idx + self.max_holding_days, len(symbol_df) - 1)
@@ -359,9 +397,12 @@ class TripleBarrierLabeler:
                 'mean_return': 0.0
             }
         
-        # Count by barrier type
+        # Count by barrier type (OR5: added gap/collision types)
         profit_barriers = (valid_df['label_barrier'] == 'profit').sum()
         loss_barriers = (valid_df['label_barrier'] == 'loss').sum()
+        profit_gap = (valid_df['label_barrier'] == 'profit_gap').sum()
+        loss_gap = (valid_df['label_barrier'] == 'loss_gap').sum()
+        loss_collision = (valid_df['label_barrier'] == 'loss_collision').sum()
         time_barriers = (valid_df['label_barrier'] == 'time').sum()
         
         # Count by unified label
@@ -373,7 +414,10 @@ class TripleBarrierLabeler:
             'total_events': len(valid_df),
             'by_barrier': {
                 'profit': int(profit_barriers),
+                'profit_gap': int(profit_gap),
                 'loss': int(loss_barriers),
+                'loss_gap': int(loss_gap),
+                'loss_collision': int(loss_collision),
                 'time': int(time_barriers)
             },
             'by_label': {

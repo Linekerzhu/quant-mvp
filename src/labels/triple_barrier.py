@@ -258,6 +258,12 @@ class TripleBarrierLabeler:
         
         atr = max(atr, entry_price * self.min_atr_pct)
         
+        # P2 (R29-B2): Final ATR NaN check - defensive guard
+        # If ATR is still NaN after all fallbacks, cannot compute barriers
+        # features_valid should catch this upstream, but defensive programming
+        if pd.isna(atr):
+            return (0, 'invalid_atr', np.nan, 0, trigger_date)
+        
         # Set barriers
         profit_barrier = entry_price * (1 + self.tp_mult * atr / entry_price)
         loss_barrier = entry_price * (1 - self.sl_mult * atr / entry_price)

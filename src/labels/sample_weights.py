@@ -102,7 +102,15 @@ class SampleWeightCalculator:
         
         for idx, row in valid_df.iterrows():
             symbol = row['symbol']
-            entry_date = row['date']
+            # P1 (R29-A1) FIX: Use entry_date (T+1) not trigger_date
+            # Active period is [entry, exit], not [trigger, exit]
+            # This was causing 12% systematic underweighting
+            # Option A: BusinessDay(1) offset (simple, minor holiday error)
+            # Option B: Store label_entry_date in triple_barrier (precise, future work)
+            from pandas.tseries.offsets import BDay
+            trigger_date = row['date']
+            entry_date = trigger_date + BDay(1)
+            
             # FIX A1 (R17): Use stored exit_date from triple_barrier instead of BDay
             # BDay skips weekends but NOT market holidays, causing 26% date mismatch
             if 'label_exit_date' in row and pd.notna(row['label_exit_date']):
@@ -111,10 +119,10 @@ class SampleWeightCalculator:
                 # P2 (R25-B2): BDay fallback - should never execute in normal flow
                 # triple_barrier always sets label_exit_date for valid events
                 holding_days = int(row['label_holding_days'])
-                exit_date = entry_date + BusinessDay(holding_days)
+                exit_date = trigger_date + BusinessDay(holding_days)
                 logger.warn("bday_exit_date_fallback", {
                     "symbol": symbol,
-                    "entry_date": str(entry_date),
+                    "trigger_date": str(trigger_date),
                     "holding_days": holding_days,
                     "note": "label_exit_date not set - using BDay approximation"
                 })
@@ -140,13 +148,17 @@ class SampleWeightCalculator:
         all_dates_set = set()
         
         for idx, row in valid_df.iterrows():
-            entry_date = row['date']
+            # P1 (R29-A1): entry_date = trigger + BDay(1)
+            from pandas.tseries.offsets import BDay
+            trigger_date = row['date']
+            entry_date = trigger_date + BDay(1)
+            
             # Use stored exit_date if available
             if 'label_exit_date' in row and pd.notna(row['label_exit_date']):
                 exit_date = row['label_exit_date']
             else:
                 holding_days = int(row['label_holding_days'])
-                exit_date = entry_date + BusinessDay(holding_days)
+                exit_date = trigger_date + BusinessDay(holding_days)
             
             # Collect all dates this event spans
             # P1 (R25-A1): Use freq='B' (business days) to exclude weekends
@@ -162,13 +174,16 @@ class SampleWeightCalculator:
         daily_event_count = pd.Series(0, index=all_dates)
         
         for idx, row in valid_df.iterrows():
-            entry_date = row['date']
+            # P1 (R29-A1): entry_date = trigger + BDay(1)
+            trigger_date = row['date']
+            entry_date = trigger_date + BDay(1)
+            
             # FIX A1 (R17): Use stored exit_date
             if 'label_exit_date' in row and pd.notna(row['label_exit_date']):
                 exit_date = row['label_exit_date']
             else:
                 holding_days = int(row['label_holding_days'])
-                exit_date = entry_date + BusinessDay(holding_days)
+                exit_date = trigger_date + BusinessDay(holding_days)
             
             # Increment count for each day this event is active
             # P1 (R25-A1): Use freq='B' to exclude weekends
@@ -180,13 +195,16 @@ class SampleWeightCalculator:
         
         # Calculate uniqueness for each event
         for idx, row in valid_df.iterrows():
-            entry_date = row['date']
+            # P1 (R29-A1): entry_date = trigger + BDay(1)
+            trigger_date = row['date']
+            entry_date = trigger_date + BDay(1)
+            
             # FIX A1 (R17): Use stored exit_date
             if 'label_exit_date' in row and pd.notna(row['label_exit_date']):
                 exit_date = row['label_exit_date']
             else:
                 holding_days = int(row['label_holding_days'])
-                exit_date = entry_date + BusinessDay(holding_days)
+                exit_date = trigger_date + BusinessDay(holding_days)
             
             # Get active days for this event
             # P1 (R25-A1): Use freq='B' to exclude weekends
@@ -204,6 +222,10 @@ class SampleWeightCalculator:
             weights.loc[idx] = uniqueness
         
         return weights
+    
+    # P2 (R29-B3): DEAD CODE - These alternative algorithms are never called
+    # Coverage: 0%. Either delete or add tests if needed as fallback.
+    # Current implementation uses interval tree approach (above).
     
     def _has_overlap_binary_search(
         self,

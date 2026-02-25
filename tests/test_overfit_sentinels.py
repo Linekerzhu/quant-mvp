@@ -88,9 +88,15 @@ class DummyFeatureSentinel:
             'importance': importances
         }).sort_values('importance', ascending=False)
         
-        # Find dummy feature rank
-        dummy_rank = importance_df[importance_df['feature'] == self.dummy_feature_name].index[0] + 1
-        dummy_importance = importance_df[importance_df['feature'] == self.dummy_feature_name]['importance'].values[0]
+        # P1 (R26-A1): Fix dummy_rank - use reset_index to get sorted position
+        # OLD BUG: .index[0] used original DataFrame index, not sorted position
+        # dummy_noise always last column → rank always = max → never triggers alert
+        importance_df = importance_df.reset_index(drop=True)
+        
+        # Find dummy feature rank (now using sorted position, not original index)
+        dummy_row = importance_df[importance_df['feature'] == self.dummy_feature_name]
+        dummy_rank = dummy_row.index[0] + 1  # +1 for 1-based rank
+        dummy_importance = dummy_row['importance'].values[0]
         
         # Calculate top percentile threshold
         n_features = len(feature_names)

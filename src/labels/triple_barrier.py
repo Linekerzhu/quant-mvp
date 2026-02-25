@@ -176,11 +176,19 @@ class TripleBarrierLabeler:
         
         # P1 (R26-A1): Check entry day (T+1) data quality
         # Trigger day features_valid doesn't guarantee entry day price is valid
+        # IMPORTANT: Must mirror _label_single_event_with_exit fallback logic
         entry_idx = idx + 1
         if entry_idx >= len(symbol_df):
             return False, 'no_entry_day_data'
         
+        # FIX: Use same fallback logic as _label_single_event_with_exit
+        # Primary: adj_open, Fallback: adj_close (for Tiingo backup sources)
         entry_price = symbol_df.loc[entry_idx, 'adj_open']
+        if pd.isna(entry_price):
+            # Fallback to adj_close for backup sources (Tiingo)
+            if 'adj_close' in symbol_df.columns:
+                entry_price = symbol_df.loc[entry_idx, 'adj_close']
+        
         if pd.isna(entry_price) or entry_price <= 0:
             return False, 'invalid_entry_price'
         

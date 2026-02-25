@@ -117,7 +117,8 @@ class TripleBarrierLabeler:
                 
                 # P1 (R27-A3): Check for invalid exit (NaN return)
                 # Mark event as invalid if exit_price was NaN
-                event_is_valid = barrier not in ['time_invalid_exit']
+                # P1 (R30-S1): Also filter invalid_atr (R29-B2 fix)
+                event_is_valid = barrier not in ['time_invalid_exit', 'invalid_atr']
                 
                 # Register this event as active
                 self._active_events[symbol] = (trigger_date, exit_date)

@@ -90,3 +90,45 @@ class TestCorporateActions:
         # Normal symbols (MOCK004+) shouldn't have splits
         normal = result[result['symbol'].isin(['MOCK004', 'MOCK005', 'MOCK006'])]
         assert not normal['detected_split'].any()
+
+    # P2 (R30-B1): Test R28-S1 fillna(True) fix path
+    def test_can_trade_nan_fillna(self, handler):
+        """
+        Test that can_trade NaN values are filled with True.
+        
+        R28-S1 fix: validate creates can_trade column with False for violations
+        and NaN for other rows. corporate_actions should fill NaN→True.
+        """
+        # Create data where validate would set some False, rest NaN
+        # (Simulating validate's output)
+        dates = pd.date_range('2024-01-01', periods=30, freq='B')
+        
+        df = pd.DataFrame({
+            'symbol': ['TEST'] * 30,
+            'date': dates,
+            'raw_open': 100.0,
+            'raw_high': 102.0,
+            'raw_low': 98.0,
+            'raw_close': 100.0,
+            'adj_open': 100.0,
+            'adj_high': 102.0,
+            'adj_low': 98.0,
+            'adj_close': 100.0,
+            'volume': 1000
+        })
+        
+        # Simulate validate output: one row False (violation), rest NaN
+        df.loc[0, 'can_trade'] = False  # Violation
+        df.loc[1:, 'can_trade'] = pd.NA  # Not checked by validate
+        
+        # Run corporate_actions
+        result = handler.detect_suspensions(df)
+        
+        # R28-S1 fix: NaN should be filled to True
+        assert result.loc[0, 'can_trade'] == False  # Violation preserved
+        assert result.loc[1, 'can_trade'] == True   # NaN filled to True
+        assert result.loc[15, 'can_trade'] == True  # NaN filled to True
+        
+        # Count: 1 False + 29 True = 30 total
+        assert (result['can_trade'] == False).sum() == 1
+        assert (result['can_trade'] == True).sum() == 29

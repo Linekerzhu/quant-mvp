@@ -108,9 +108,16 @@ class SampleWeightCalculator:
             if 'label_exit_date' in row and pd.notna(row['label_exit_date']):
                 exit_date = row['label_exit_date']
             else:
-                # Fallback for backwards compatibility
+                # P2 (R25-B2): BDay fallback - should never execute in normal flow
+                # triple_barrier always sets label_exit_date for valid events
                 holding_days = int(row['label_holding_days'])
                 exit_date = entry_date + BusinessDay(holding_days)
+                logger.warn("bday_exit_date_fallback", {
+                    "symbol": symbol,
+                    "entry_date": str(entry_date),
+                    "holding_days": holding_days,
+                    "note": "label_exit_date not set - using BDay approximation"
+                })
             
             interval = (entry_date, exit_date, idx, symbol)
             symbol_intervals[symbol].append(interval)
@@ -142,9 +149,9 @@ class SampleWeightCalculator:
                 exit_date = entry_date + BusinessDay(holding_days)
             
             # Collect all dates this event spans
-            # Use actual trading days from the original dataframe if available
-            # For now, use inclusive date range with actual data filtering
-            event_dates = pd.date_range(entry_date, exit_date, freq='D')
+            # P1 (R25-A1): Use freq='B' (business days) to exclude weekends
+            # This prevents weekend days from inflating concurrency counts
+            event_dates = pd.date_range(entry_date, exit_date, freq='B')
             for d in event_dates:
                 all_dates_set.add(d)
         
@@ -164,8 +171,9 @@ class SampleWeightCalculator:
                 exit_date = entry_date + BusinessDay(holding_days)
             
             # Increment count for each day this event is active
-            # FIX B2 (R17): Use daily date range, filter to valid trading days in timeline
-            active_days = pd.date_range(entry_date, exit_date, freq='D', inclusive='left')
+            # P1 (R25-A1): Use freq='B' to exclude weekends
+            # P1 (R25-A2): Remove inclusive='left' to include exit_date (last active day)
+            active_days = pd.date_range(entry_date, exit_date, freq='B')
             # Only count days that exist in our timeline (actual trading days)
             valid_active_days = active_days.intersection(all_dates)
             daily_event_count[valid_active_days] += 1
@@ -181,8 +189,9 @@ class SampleWeightCalculator:
                 exit_date = entry_date + BusinessDay(holding_days)
             
             # Get active days for this event
-            # FIX B2 (R17): Use daily date range, filter to valid trading days
-            active_days = pd.date_range(entry_date, exit_date, freq='D', inclusive='left')
+            # P1 (R25-A1): Use freq='B' to exclude weekends
+            # P1 (R25-A2): Remove inclusive='left' to include exit_date
+            active_days = pd.date_range(entry_date, exit_date, freq='B')
             valid_active_days = active_days.intersection(all_dates)
             
             # Uniqueness = mean(1 / concurrent_count) over event lifetime

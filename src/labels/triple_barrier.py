@@ -249,6 +249,13 @@ class TripleBarrierLabeler:
             
             exit_date = symbol_df.loc[idx, 'date']
             
+            # P1 (R25-A3) DOCUMENTATION: Profit-first bias on same-day dual trigger
+            # When high >= profit_barrier AND low <= loss_barrier on the same day,
+            # this code returns 'profit' (profit-first strategy). Without intraday
+            # tick data, we cannot determine the actual trigger order.
+            # Impact: <0.1% of events (extreme volatility days like earnings/FOMC).
+            # Phase C should monitor dual-trigger event ratio as data quality metric.
+            
             # Check profit barrier
             if day_high >= profit_barrier:
                 exit_price = profit_barrier

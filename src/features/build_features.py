@@ -580,8 +580,9 @@ class FeatureEngineer:
         )
         
         # For each date, calculate market breadth (from primary sources only)
+        # P2 (R25-B1): Exclude NaN from denominator (first day pct_change = NaN)
         date_breadth = df_primary_only.groupby('date')['daily_return'].agg(
-            lambda x: (x > 0).sum() / max((x != 0).sum(), 1)
+            lambda x: (x.notna() & (x > 0)).sum() / max((x.notna() & (x != 0)).sum(), 1)
         ).reset_index()
         date_breadth.columns = ['date', 'market_breadth']
         

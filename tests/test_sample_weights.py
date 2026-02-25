@@ -77,20 +77,22 @@ class TestSampleWeightCalculator:
     
     def test_non_overlapping_events_full_weight(self, calculator):
         """Test that non-overlapping events get full weight."""
-        dates = pd.date_range('2024-01-01', periods=5, freq='B')
+        # P1 (R25-A2): Updated test - holding_days=1 now includes exit_date
+        # With freq='B' and no inclusive='left', events span 2 days
+        # To get non-overlapping, need gap >= holding_days
+        dates = pd.date_range('2024-01-01', periods=5, freq='2B')  # Gap of 2 business days
         
         df = pd.DataFrame({
             'symbol': ['A'] * 5,
             'date': dates,
             'event_valid': [True] * 5,
-            'label_holding_days': [1] * 5,  # No overlap
+            'label_holding_days': [1] * 5,  # Now truly non-overlapping with 2B gap
             'label': [1] * 5
         })
         
         result = calculator.calculate_weights(df)
         
-        # Same symbol events don't overlap (per protocol)
-        # So weights should all be 1.0
+        # With 2 business day gaps and 1 day holding, no overlap
         for weight in result['sample_weight']:
             assert weight == 1.0
     

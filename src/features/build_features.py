@@ -69,6 +69,10 @@ class FeatureEngineer:
         # Ensure sorted by symbol and date
         df = df.sort_values(['symbol', 'date'])
         
+        # P0-A1 (R22): Market features MUST be calculated before split
+        # These features require cross-symbol perspective and should NOT be in _build_features_inner
+        df = self._calc_market_features(df)  # B14: VIX + market breadth
+        
         # P0-A1 (R21): Per-symbol source detection instead of batch-level .all()
         # .all() causes ALL symbols to lose regime features if ANY symbol is backup source
         # Solution: Split into primary/backup batches, process separately, then merge
@@ -110,7 +114,7 @@ class FeatureEngineer:
             # Mixed batch: only check features for backup source
             backup_valid_mask = df['source_provides_adj_ohlc'] == False
             backup_feature_cols = [c for c in feature_cols 
-                                   if c not in ['rsi_14', 'macd_line_pct', 'macd_signal_pct', 
+                                   if c not in ['rsi_14', 'macd_line_pct', 'macd_histogram_pct', 
                                                 'pv_correlation_5d', 'adx_14']]
             
             # Primary source: check all features
@@ -168,7 +172,7 @@ class FeatureEngineer:
         df = self._calc_volatility_features_fast(df, provides_adj_ohlc)
         df = self._calc_volume_features_fast(df)
         df = self._calc_mean_reversion_features_fast(df)
-        df = self._calc_market_features(df)  # B14: VIX + market breadth
+        # P0-A1 (R22): Market features calculated BEFORE split (line 74), skip here
         df = self._calc_divergence_features(df, provides_adj_ohlc)  # B15: price-volume divergence
         
         # P2-C1: RegimeDetector only when adj OHLC available
@@ -190,22 +194,13 @@ class FeatureEngineer:
             df['regime_trend_score'] = np.nan
         
         # Normalize dollar-scale features
+        # P1-B2 (R22): Replace macd_signal_pct with macd_histogram_pct
+        # signal_pct has r=0.964 with line_pct (highly redundant)
+        # histogram_pct = (line - signal) / close has r=0.333 with line_pct
         df['macd_line_pct'] = df['macd_line'] / df['adj_close']
-        df['macd_signal_pct'] = df['macd_signal'] / df['adj_close']
+        df['macd_histogram_pct'] = (df['macd_line'] - df['macd_signal']) / df['adj_close']
         
         # Inject dummy noise feature
-        df = self._inject_dummy_noise(df)
-        
-        return df
-        
-        # P0-A1: Normalize dollar-scale features to percentage of price
-        # MACD line and signal are in dollar terms, causing 68-252x difference
-        # between $10 and $500 stocks. Tree models would split on price level, not signal.
-        # R19 B3: Removed atr_20_pct (r=0.897 with rv_20d) - use rv_20d as volatility proxy
-        df['macd_line_pct'] = df['macd_line'] / df['adj_close']
-        df['macd_signal_pct'] = df['macd_signal'] / df['adj_close']
-        
-        # Inject dummy noise feature (Plan v4)
         df = self._inject_dummy_noise(df)
         
         return df

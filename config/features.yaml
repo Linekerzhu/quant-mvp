@@ -28,8 +28,9 @@ categories:
       - name: macd_line_pct
         description: MACD line as % of price (normalized)
         lookback: 26
-      - name: macd_signal_pct
-        description: MACD signal as % of price (normalized)
+      # R22 B2: Replaced signal_pct with histogram_pct (r=0.964 → 0.333)
+      - name: macd_histogram_pct
+        description: MACD histogram (line - signal) as % of price
         lookback: 35
   
   volatility:
@@ -113,18 +114,15 @@ importance:
   history_days: 252  # Keep 1 year of importance history
 
 # =============================================================================
-# R19 Changelog (v1 → v2)
+# Changelog
 # =============================================================================
-# Removed features:
-# - macd_line, macd_signal (dollar-scale, 53x cross-price variance)
-# - atr_20 (dollar-scale, redundant with atr_20_pct)
-# - obv (absolute volume, 500x cross-symbol variance)
-# - regime_vol_score (r=0.90 with rv_20d)
-# - regime_trend_score (r=0.82 with adx_14)
-# - price_vs_ema20_zscore (r=0.97 with price_vs_sma20_zscore)
+# R19 (v1 → v2):
+# Removed: macd_line, macd_signal, atr_20, obv, regime_vol_score, 
+#          regime_trend_score, price_vs_ema20_zscore
+# Added: macd_line_pct, macd_signal_pct
 #
-# Added features:
-# - macd_line_pct, macd_signal_pct (normalized to % of price)
-#
-# Note: atr_20_pct was added in R18 but removed in R19 B3 (redundant with rv_20d)
+# R22 (v2):
+# Replaced: macd_signal_pct → macd_histogram_pct
+# Reason: signal_pct has r=0.964 with line_pct (highly redundant)
+#         histogram_pct has r=0.333 with line_pct (better independence)
 # =============================================================================

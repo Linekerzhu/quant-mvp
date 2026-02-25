@@ -10,6 +10,7 @@ import os
 import time
 from typing import Optional, List, Dict
 import pandas as pd
+import numpy as np  # P0-A4: Required for np.nan in Tiingo fallback
 import yfinance as yf
 from requests.adapters import HTTPAdapter
 from requests.packages.urllib3.util.retry import Retry

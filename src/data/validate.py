@@ -96,6 +96,7 @@ class DataValidator:
         - >= max_consecutive_nan consecutive NaN: Mark as suspension (don't fill)
         """
         df = df.sort_values(['symbol', 'date']).copy()
+        df = df.reset_index(drop=True)  # P2-C4: Ensure index aligns with temporal order
         
         price_cols = ['raw_open', 'raw_high', 'raw_low', 'raw_close',
                      'adj_open', 'adj_high', 'adj_low', 'adj_close']

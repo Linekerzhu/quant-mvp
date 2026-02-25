@@ -268,8 +268,10 @@ class TripleBarrierLabeler:
         exit_price = symbol_df.loc[exit_idx, 'adj_close']
         ret = np.log(exit_price / entry_price)  # B24: Log return
         
-        # Time barrier label: use sign of return
-        label = 1 if ret > 0 else -1 if ret < 0 else 0
+        # P0-A2: AFML Ch3.4 - time barrier = no clear outcome → neutral label
+        # 35% of events hit time barrier, 38% with |return| < 1%
+        # Using sign of return would conflate +0.0003 with +0.043
+        label = 0
         
         return (label, 'time', ret, self.max_holding_days, exit_date)
     
@@ -277,10 +279,12 @@ class TripleBarrierLabeler:
         """
         Get distribution of labels.
         
-        Unified label semantics:
-        - 1: Profit barrier hit OR time barrier with positive return
-        - -1: Loss barrier hit OR time barrier with negative return  
-        - 0: Time barrier with zero return (rare)
+        P0-A2: Updated label semantics (AFML Ch3.4):
+        - 1: Profit barrier hit
+        - -1: Loss barrier hit
+        - 0: Time barrier hit (neutral - no clear outcome)
+        
+        Note: label_return still contains actual return for analysis
         """
         valid_df = df[df['event_valid'] == True]
         

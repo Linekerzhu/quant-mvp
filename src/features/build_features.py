@@ -87,8 +87,30 @@ class FeatureEngineer:
         df = self._calc_market_features(df)  # B14: VIX + market breadth
         df = self._calc_divergence_features(df, provides_adj_ohlc)  # B15: price-volume divergence
         
-        # FIX B1: Add RegimeDetector features (regime_volatility, regime_trend)
-        df = RegimeDetector().detect_regime(df)
+        # P2-C1: RegimeDetector only when adj OHLC available
+        if provides_adj_ohlc:
+            df = RegimeDetector().detect_regime(df)
+        else:
+            # Backup source fallback: use simpler regime estimation
+            df['adx_14'] = np.nan
+            df['regime_volatility'] = 'unknown'
+            df['regime_trend'] = 'unknown'
+            df['regime_combined'] = 'unknown_unknown'
+            # Approximate regime from realized volatility
+            if 'rv_20d' in df.columns:
+                df['regime_vol_score'] = np.clip(
+                    (df['rv_20d'] - 0.15) / (0.25 - 0.15), 0, 1
+                )
+            else:
+                df['regime_vol_score'] = np.nan
+            df['regime_trend_score'] = np.nan
+        
+        # P0-A1: Normalize dollar-scale features to percentage of price
+        # ATR, MACD line, MACD signal are in dollar terms, causing 68-252x difference
+        # between $10 and $500 stocks. Tree models would split on price level, not signal.
+        df['atr_20_pct'] = df[f'atr_{self.atr_window}'] / df['adj_close']
+        df['macd_line_pct'] = df['macd_line'] / df['adj_close']
+        df['macd_signal_pct'] = df['macd_signal'] / df['adj_close']
         
         # Inject dummy noise feature (Plan v4)
         df = self._inject_dummy_noise(df)
@@ -346,7 +368,14 @@ class FeatureEngineer:
                    # FIX A1: Exclude RegimeDetector string columns (use numeric scores instead)
                    'regime_volatility', 'regime_trend', 'regime_combined',
                    # FIX A1: Exclude old atr_N columns that don't match current config
-                   'atr_14', 'atr_5', 'atr_10', 'atr_60']  # Only atr_{self.atr_window} is valid
+                   'atr_14', 'atr_5', 'atr_10', 'atr_60',
+                   # P0-A1: Use _pct normalized versions instead of dollar-scale originals
+                   'macd_line', 'macd_signal',  # atr_20 already excluded above
+                   # P1-B1: Remove high-redundancy features (|r| > 0.8)
+                   'regime_vol_score',       # r=0.90 with rv_20d
+                   'regime_trend_score',     # r=0.82 with adx_14
+                   'price_vs_ema20_zscore',  # r=0.97 with price_vs_sma20_zscore
+                   'obv']                    # absolute volume, 500x cross-symbol variance
         
         # Defensive assertion: detect any label-related columns
         label_cols = [col for col in df.columns if col.startswith('label')]
@@ -497,6 +526,7 @@ class FeatureEngineer:
         # First, get unique dates and their vix_proxy values
         date_vol_proxy = df.groupby('date')['vix_proxy_5d'].first().reset_index()
         date_vol_proxy['vix_change_5d'] = date_vol_proxy['vix_proxy_5d'].pct_change(periods=5)
+        date_vol_proxy['vix_change_5d'] = date_vol_proxy['vix_change_5d'].clip(-2.0, 2.0)  # P0-A3: Cap outliers
         
         # FIX C1: Prevent duplicate columns on re-entry
         if 'vix_change_5d' in df.columns:

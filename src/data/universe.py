@@ -79,6 +79,10 @@ class UniverseManager:
         Returns:
             List of liquid symbols
         """
+        # P0-A5: Guard clause for empty DataFrame
+        if df.empty or 'date' not in df.columns:
+            return []
+        
         recent = df[df['date'] >= df['date'].max() - pd.Timedelta(days=lookback_days)]
         
         liquid = []
@@ -120,6 +124,10 @@ class UniverseManager:
         Returns:
             List of symbols with sufficient history
         """
+        # P0-A5: Guard clause for empty DataFrame
+        if df.empty or 'symbol' not in df.columns:
+            return []
+        
         min_days = min_days or self.min_history_days
         
         valid = []
@@ -218,6 +226,23 @@ class UniverseManager:
             base_tickers = self.get_sp500_tickers()
         else:
             base_tickers = current_universe
+        
+        # P0-A5: Guard clause for empty DataFrame (first run scenario)
+        if df.empty or 'symbol' not in df.columns:
+            return {
+                'symbols': sorted(base_tickers[:10]),
+                'cold_start': sorted(base_tickers[:10]),
+                'count': min(len(base_tickers), 10),
+                'cold_start_count': min(len(base_tickers), 10),
+                'metadata': {
+                    'base_tickers': len(base_tickers),
+                    'with_data': 0,
+                    'liquid': 0,
+                    'sufficient_history': 0,
+                    'survivorship_bias_method': self.config['universe']['survivorship_bias']['method'],
+                    'first_run': True
+                }
+            }
         
         # Filter to available data
         available = df[df['symbol'].isin(base_tickers)]['symbol'].unique().tolist()

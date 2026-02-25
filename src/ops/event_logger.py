@@ -6,7 +6,7 @@ All system events are logged in JSON Lines format for auditability.
 
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timezone  # P2-C3: Add timezone for UTC
 from pathlib import Path
 from typing import Any, Dict, Optional
 from enum import Enum
@@ -31,7 +31,7 @@ class EventLogger:
     
     def _get_current_file(self) -> Path:
         """Get current day's log file."""
-        date_str = datetime.now().strftime("%Y-%m-%d")
+        date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")  # P2-C3: UTC
         return self.log_dir / f"events_{date_str}.jsonl"
     
     def _ensure_file(self):
@@ -59,7 +59,7 @@ class EventLogger:
         self._ensure_file()
         
         event = {
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),  # P2-C3: UTC
             "level": level.value,
             "type": event_type,
             "symbol": symbol,

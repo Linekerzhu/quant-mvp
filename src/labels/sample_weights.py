@@ -69,7 +69,9 @@ class SampleWeightCalculator:
         weights = self._calculate_weights_interval_tree(valid_df)
         
         # Assign weights back to dataframe
-        df.loc[valid_mask, 'sample_weight'] = weights.values
+        # P2-C2: Use weights.index for alignment instead of valid_mask + .values
+        # This handles cases where valid_df has non-contiguous index
+        df.loc[weights.index, 'sample_weight'] = weights
         
         logger.info("weights_calculated", {
             "valid_events": len(valid_df),

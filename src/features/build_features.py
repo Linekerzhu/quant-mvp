@@ -125,8 +125,9 @@ class FeatureEngineer:
         # When source lacks AdjOHLC, only check features that don't depend on OHLC
         if not provides_adj_ohlc:
             # Backup source (Tiingo): only check AdjClose-based features
+            # P0-A2 (R20): Updated exemption list - renamed features from R18
             feature_cols_to_check = [c for c in feature_cols 
-                                     if c not in ['rsi_14', 'macd_line', 'macd_signal', 
+                                     if c not in ['rsi_14', 'macd_line_pct', 'macd_signal_pct', 
                                                   'atr_20', 'pv_correlation_5d', 
                                                   'regime_trend', 'regime_trend_score', 'adx_14']]
             logger.info("features_valid_backup_source", {

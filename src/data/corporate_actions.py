@@ -51,9 +51,11 @@ class CorporateActionsHandler:
                 continue
             
             # Calculate returns
-            # P2-C1: Explicit fill_method=None to avoid FutureWarning
-            raw_returns = symbol_df['raw_close'].pct_change(fill_method=None).abs()
-            adj_returns = symbol_df['adj_close'].pct_change(fill_method=None).abs()
+            # P0-A1 (R20): ffill before pct_change to handle suspension gaps
+            # pct_change(fill_method=None) returns NaN after gaps, missing splits on
+            # first trading day after suspension. ffill preserves detection semantics.
+            raw_returns = symbol_df['raw_close'].ffill().pct_change(fill_method=None).abs()
+            adj_returns = symbol_df['adj_close'].ffill().pct_change(fill_method=None).abs()
             
             # Detect splits
             # FIX B3: Use >= to catch exact 2:1 splits (|return| = 0.50)

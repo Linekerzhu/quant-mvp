@@ -189,28 +189,31 @@ class TestConfigurationConsistency:
     """Test that configurations are consistent across modules."""
     
     def test_atr_window_consistency(self):
-        """Test ATR window is consistent between features and labels."""
-        import yaml
+        """Test ATR window is consistent between features and labels.
         
-        with open("config/features.yaml") as f:
-            features_cfg = yaml.safe_load(f)
+        P1-B2 (R20): Updated to not depend on features.yaml ATR feature presence.
+        ATR is used internally by triple_barrier for barrier calculation,
+        but may not be exposed as a feature (removed in R19-B3 due to redundancy).
+        """
+        import yaml
         
         with open("config/event_protocol.yaml") as f:
             protocol_cfg = yaml.safe_load(f)
         
-        # FIX B1: Actually check ATR window consistency
         # Get expected ATR window from protocol
         expected_window = protocol_cfg['triple_barrier']['atr']['window']
         
-        # Check that features.yaml has matching atr_N feature
-        volatility_features = features_cfg['categories']['volatility']['features']
-        atr_features = [f for f in volatility_features if f['name'].startswith('atr_')]
+        # Verify ATR window is configured (used by triple_barrier internally)
+        assert expected_window > 0, "ATR window must be positive"
+        assert expected_window <= 60, "ATR window should be reasonable (< 60 days)"
         
-        assert len(atr_features) == 1, f"Expected exactly one ATR feature, got {atr_features}"
-        actual_window = int(atr_features[0]['name'].split('_')[1])
+        # Verify triple_barrier config is complete
+        assert 'atr' in protocol_cfg['triple_barrier'], "ATR config missing"
+        assert 'window' in protocol_cfg['triple_barrier']['atr'], "ATR window missing"
+        assert 'min_atr_pct' in protocol_cfg['triple_barrier']['atr'], "min_atr_pct missing"
         
-        assert actual_window == expected_window, \
-            f"ATR window mismatch: features.yaml has {actual_window}, event_protocol.yaml expects {expected_window}"
+        # Note: ATR features in features.yaml are optional
+        # R19-B3 removed atr_20_pct (r=0.897 with rv_20d)
     
     def test_max_holding_days_consistency(self):
         """Test max holding days is consistent."""

@@ -52,13 +52,14 @@ class TestFeatureEngineer:
     
     def test_volume_features(self, engineer, mock_prices):
         """Test volume feature calculation."""
-        result = engineer._calc_volume_features(mock_prices)
+        # R24-A2a: Use _fast version (old _calc_volume_features deleted)
+        result = engineer._calc_volume_features_fast(mock_prices)
         
         # Check relative volume
         assert 'relative_volume_20d' in result.columns
         
-        # Check OBV
-        assert 'obv' in result.columns
+        # R24-A2b: OBV calculation removed (not used in features)
+        # assert 'obv' in result.columns
     
     def test_mean_reversion_features(self, engineer, mock_prices):
         """Test mean reversion feature calculation."""

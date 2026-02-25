@@ -567,6 +567,11 @@ class FeatureEngineer:
         else:
             df_primary_only = df
         
+        # Handle edge case: no primary sources available
+        if len(df_primary_only) == 0:
+            # Fallback: use all data (including backup sources)
+            df_primary_only = df
+        
         # Market breadth: proportion of stocks advancing vs declining
         # Calculate daily returns for each symbol (primary source only)
         df_primary_only = df_primary_only.copy()

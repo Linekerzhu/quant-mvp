@@ -369,8 +369,9 @@ class FeatureEngineer:
                    'regime_volatility', 'regime_trend', 'regime_combined',
                    # FIX A1: Exclude old atr_N columns that don't match current config
                    'atr_14', 'atr_5', 'atr_10', 'atr_60',
-                   # P0-A1: Use _pct normalized versions instead of dollar-scale originals
-                   'macd_line', 'macd_signal',  # atr_20 already excluded above
+                   # P0-A1 (R19): Use _pct normalized versions instead of dollar-scale originals
+                   'atr_20',  # R19-A1: Add atr_20 to exclude (was missing)
+                   'macd_line', 'macd_signal',
                    # P1-B1: Remove high-redundancy features (|r| > 0.8)
                    'regime_vol_score',       # r=0.90 with rv_20d
                    'regime_trend_score',     # r=0.82 with adx_14
@@ -579,6 +580,9 @@ class FeatureEngineer:
                 )
                 corr_parts.append(corr)
             df['pv_correlation_5d'] = pd.concat(corr_parts)
+            # P0-A2 (R19): Fill NaN from constant-volume edge cases
+            # rolling.corr() returns NaN when variance=0; treat as neutral (0 correlation)
+            df['pv_correlation_5d'] = df['pv_correlation_5d'].fillna(0.0)
         else:
             # Disable correlation feature when OHLC unreliable
             df['pv_correlation_5d'] = np.nan

@@ -51,7 +51,9 @@ class DataValidator:
         # Check 2: Missing values
         nan_mask = df[['raw_open', 'raw_high', 'raw_low', 'raw_close']].isna().any(axis=1)
         nan_count = nan_mask.sum()
-        report["checks"]["missing_values"] = {"count": int(nan_count)}
+        # OR4-P0-2 (R25): Add explicit passed field - initially False if any NaN
+        # Will be updated to True after handling in _handle_missing_values_fixed
+        report["checks"]["missing_values"] = {"count": int(nan_count), "passed": nan_count == 0}
         
         # Handle consecutive NaN (halt detection) - FIXED ALL BUGS
         df = self._handle_missing_values_fixed(df, report)
@@ -67,8 +69,9 @@ class DataValidator:
         
         # Calculate pass rate
         total_checks = len(report["checks"])
-        passed_checks = sum(1 for c in report["checks"].values() if c.get("passed", True))
-        report["pass_rate"] = passed_checks / total_checks if total_checks > 0 else 1.0
+        # OR4-P0-2 (R25): Default to False (not passed) if field missing
+        passed_checks = sum(1 for c in report["checks"].values() if c.get("passed", False))
+        report["pass_rate"] = passed_checks / total_checks if total_checks > 0 else 0.0
         
         passed = report["pass_rate"] >= 0.99  # 99% pass threshold
         
@@ -155,6 +158,9 @@ class DataValidator:
         
         report["checks"]["missing_values"]["filled"] = int(filled_count)
         report["checks"]["missing_values"]["suspension_marked"] = int(suspension_marked)
+        # OR4-P0-2 (R25): Update passed - True if all NaN handled (filled or marked as suspension)
+        original_count = report["checks"]["missing_values"]["count"]
+        report["checks"]["missing_values"]["passed"] = (filled_count + suspension_marked) >= original_count
         return df
     
     def _detect_anomalies(
@@ -231,7 +237,9 @@ class DataValidator:
         
         report["checks"]["suspension_detection"] = {
             "suspension_count": len(suspensions),
-            "details": suspensions
+            "details": suspensions,
+            # OR4-P0-2 (R25): Always passed - suspension detection itself is a check, not a failure
+            "passed": True
         }
         
         return df

@@ -120,7 +120,8 @@ class CorporateActionsHandler:
         
         for symbol in df['symbol'].unique():
             mask = df['symbol'] == symbol
-            symbol_df = df.loc[mask]
+            # OR4-P0-1 (R25): Sort by date to ensure last_valid_index works correctly
+            symbol_df = df.loc[mask].sort_values('date')
             
             # Check for trailing NaN (delisting)
             last_valid = symbol_df['raw_close'].last_valid_index()

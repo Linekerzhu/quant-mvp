@@ -56,9 +56,9 @@ class FeatureEngineer:
             if feature.get('requires_ohlc', False):
                 exempt_features.append(feature['name'])
         
+        # OR4-P2-1 (R25): Remove feature names from logs (no info value, potential leak)
         logger.info("ohlc_exempt_features_built", {
-            "count": len(exempt_features),
-            "features": exempt_features
+            "count": len(exempt_features)
         })
         
         return exempt_features

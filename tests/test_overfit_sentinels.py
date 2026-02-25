@@ -207,8 +207,20 @@ class TimeShuffleSentinel:
         mean_shuffle = shuffle_scores.mean()
         max_shuffle = shuffle_scores.max()
         
-        # Pass if mean <= threshold AND max <= threshold (per Plan)
-        passed = (mean_shuffle <= self.MEAN_AUC_THRESHOLD) and (max_shuffle <= self.MAX_AUC_THRESHOLD)
+        # P2 (R27-B4): Add comparison vs baseline
+        # If shuffle AUC > baseline, that's suspicious (model performs better on random data)
+        # Allow 5% tolerance for noise
+        mean_vs_baseline_ok = mean_shuffle <= baseline_mean * 1.05
+        
+        # Pass if:
+        # 1. mean <= absolute threshold (0.55)
+        # 2. max <= absolute threshold (0.58)
+        # 3. mean shuffle not significantly higher than baseline (5% tolerance)
+        passed = (
+            (mean_shuffle <= self.MEAN_AUC_THRESHOLD) and 
+            (max_shuffle <= self.MAX_AUC_THRESHOLD) and
+            mean_vs_baseline_ok
+        )
         
         self.results = {
             'baseline_auc': float(baseline_mean),
@@ -216,6 +228,7 @@ class TimeShuffleSentinel:
             'shuffle_mean_auc': float(mean_shuffle),
             'shuffle_std_auc': float(shuffle_scores.std()),
             'shuffle_max_auc': float(max_shuffle),
+            'mean_vs_baseline_ok': mean_vs_baseline_ok,  # P2 (R27-B4): New check
             'passed': passed,
             'n_shuffles': self.n_shuffles,
             'scoring': scoring

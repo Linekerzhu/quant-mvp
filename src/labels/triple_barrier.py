@@ -213,32 +213,38 @@ class TripleBarrierLabeler:
     def _label_single_event_with_exit(
         self,
         symbol_df: pd.DataFrame,
-        entry_idx: int,
+        trigger_idx: int,  # P2 (R27-B2): Renamed from entry_idx - this is trigger day, not entry day
         trigger_date: pd.Timestamp
     ) -> Tuple[int, str, float, int, pd.Timestamp]:
         """
         Label a single event and return actual exit date.
         
+        P2 (R27-B2) FIX: Parameter renamed from entry_idx to trigger_idx.
+        Entry day is trigger_idx + 1 (T+1).
+        
         Returns:
             (label, barrier_hit, return, holding_days, exit_date)
         """
+        # Actual entry day is T+1
+        entry_idx = trigger_idx + 1
+        
         # FIX B1 (R17): Handle backup sources without reliable adj OHLC
         # Check if we have adj_open or need to fall back to raw prices
-        has_adj_ohlc = all(col in symbol_df.columns and pd.notna(symbol_df.loc[entry_idx + 1, col]) 
+        has_adj_ohlc = all(col in symbol_df.columns and pd.notna(symbol_df.loc[entry_idx, col]) 
                           for col in ['adj_open', 'adj_high', 'adj_low', 'adj_close'])
         
         if has_adj_ohlc:
             # Entry price (T+1 open)
-            entry_price = symbol_df.loc[entry_idx + 1, 'adj_open']
+            entry_price = symbol_df.loc[entry_idx, 'adj_open']
         else:
             # Fallback to raw close (Tiingo has adj_close but not adj_open)
             # Use adj_close as proxy for entry price
-            entry_price = symbol_df.loc[entry_idx + 1, 'adj_close']
+            entry_price = symbol_df.loc[entry_idx, 'adj_close']
         
-        entry_date = symbol_df.loc[entry_idx + 1, 'date']
+        entry_date = symbol_df.loc[entry_idx, 'date']
         
-        # ATR at trigger
-        atr = symbol_df.loc[entry_idx, self.atr_col] if self.atr_col in symbol_df.columns else np.nan
+        # ATR at trigger (trigger_idx is the original trigger day)
+        atr = symbol_df.loc[trigger_idx, self.atr_col] if self.atr_col in symbol_df.columns else np.nan
         
         # FIX B1 (R17): Fallback ATR from raw OHLC if primary ATR unavailable
         if pd.isna(atr):
@@ -246,9 +252,9 @@ class TripleBarrierLabeler:
                 # Use raw high-low range as ATR approximation
                 # This is less accurate but allows Tiingo failover to generate events
                 # Calculate rolling mean of (high - low) for the ATR window
-                start_idx = max(0, entry_idx - self.atr_window + 1)
-                atr = (symbol_df.loc[start_idx:entry_idx, 'raw_high'] - 
-                       symbol_df.loc[start_idx:entry_idx, 'raw_low']).mean()
+                start_idx = max(0, trigger_idx - self.atr_window + 1)
+                atr = (symbol_df.loc[start_idx:trigger_idx, 'raw_high'] - 
+                       symbol_df.loc[start_idx:trigger_idx, 'raw_low']).mean()
         
         atr = max(atr, entry_price * self.min_atr_pct)
         
@@ -274,6 +280,12 @@ class TripleBarrierLabeler:
                 # Fallback to raw only if adj_close unavailable
                 day_high = symbol_df.loc[idx, 'adj_close']
                 day_low = symbol_df.loc[idx, 'adj_close']
+            
+            # P2 (R27-B3): Skip day if price data is NaN (yfinance data quality issue)
+            # NaN comparison always returns False, so barrier wouldn't trigger
+            # This could cause wrong labels if day_high/day_low is NaN
+            if pd.isna(day_high) or pd.isna(day_low):
+                continue  # Skip this day, continue to next day in holding period
             
             exit_date = symbol_df.loc[idx, 'date']
             

@@ -71,15 +71,17 @@ validation:
     n_splits: 6
     n_test_splits: 2
     purge_window: 10  # days
-    embargo_window: 60  # days
+    # P2 (R27-B1): Reduced embargo to ensure all paths have >= 200d training
+    # Previous 60d: gap=70d, 3/15 paths had only 56d effective training
+    # Now 40d: gap=50d, all paths have >= 238d effective training
+    embargo_window: 40  # days (was 60)
     # Minimum data length formula (per plan §6.5):
     # min_days = n_splits * (purge + embargo) / (n_splits - n_test_splits)
-    #          = 6 * 70 / 4 = 105 days per test fold pair
-    # R16: Fixed from 252 to satisfy CPCV constraints
-    # R21 B1: Updated 420 → 504 to satisfy fold_size > gap (not just >=)
-    #         fold_size = 504/6 = 84d > gap (70d) ✓
-    #         Previous 420d gave fold_size=70d = gap (boundary violation)
-    min_data_days: 504  # R21: 504/6=84 > 70, ensures proper CPCV math
+    #          = 6 * 50 / 4 = 75 days per test fold pair
+    # P2 (R27-B1): Increased to 630 to ensure adequate training data
+    # fold_size = 630/6 = 105d > gap (50d) ✓
+    # All 15 CPCV paths now have >= 200d effective training
+    min_data_days: 630  # R27: 630/6=105 > 50, all paths adequate
   
   # Walk-Forward validation
   walk_forward:

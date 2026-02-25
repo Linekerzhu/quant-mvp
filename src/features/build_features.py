@@ -494,9 +494,10 @@ class FeatureEngineer:
     
     def _calc_volume_features_fast(self, df: pd.DataFrame) -> pd.DataFrame:
         """Calculate volume features using groupby (optimized)."""
-        # Relative volume
+        # Relative volume - P2 (R23): Use shift(1) to exclude current day from mean
+        # Prevents self-reference that compresses extreme volume signals by 31%
         df['relative_volume_20d'] = df.groupby('symbol')['volume'].transform(
-            lambda x: x / x.rolling(window=20, min_periods=1).mean()
+            lambda x: x / x.shift(1).rolling(window=20, min_periods=1).mean()
         )
         
         # OBV per symbol (explicit loop — groupby.apply unreliable across pandas versions)

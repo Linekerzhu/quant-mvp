@@ -71,11 +71,13 @@ class CorporateActionsHandler:
                     # Calculate split ratio
                     idx = symbol_df[symbol_df['date'] == split_date].index[0]
                     if idx > 0:
-                        # Use iloc for positional indexing (safe after reset_index)
-                        prev_raw = symbol_df.iloc[idx - 1]['raw_close']
+                        # P1 (R25): Use ffilled raw_close to handle gap scenarios
+                        # If previous row is NaN (gap), ffill provides last valid value
+                        raw_ffilled = symbol_df['raw_close'].ffill()
+                        prev_raw = raw_ffilled.iloc[idx - 1]
                         curr_raw = symbol_df.iloc[idx]['raw_close']
                         
-                        if curr_raw != 0:
+                        if curr_raw != 0 and pd.notna(prev_raw):
                             ratio = prev_raw / curr_raw
                             
                             df.loc[
@@ -223,7 +225,9 @@ class CorporateActionsHandler:
                 if end is None:
                     end_idx = symbol_df.index[-1]
                 else:
-                    end_idx = end
+                    # P0 (R25): Fix off-by-one - 'end' is first non-NaN row index
+                    # loc[start:end] is inclusive, so we need end-1 to exclude it
+                    end_idx = end - 1
                 
                 days = symbol_df.loc[start:end_idx].shape[0]
                 
@@ -251,7 +255,9 @@ class CorporateActionsHandler:
                 if end is None:
                     continue
                 
-                days = symbol_df.loc[start:end].shape[0]
+                # P0 (R25): Fix off-by-one - same as suspension marking above
+                end_idx = end - 1
+                days = symbol_df.loc[start:end_idx].shape[0]
                 
                 if days >= min_consecutive:
                     # Find resume point

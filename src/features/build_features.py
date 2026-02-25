@@ -69,14 +69,98 @@ class FeatureEngineer:
         # Ensure sorted by symbol and date
         df = df.sort_values(['symbol', 'date'])
         
-        # Check if source provides reliable adj OHLC (Patch 1 compliance)
-        provides_adj_ohlc = df.get('source_provides_adj_ohlc', pd.Series([True] * len(df))).all()
+        # P0-A1 (R21): Per-symbol source detection instead of batch-level .all()
+        # .all() causes ALL symbols to lose regime features if ANY symbol is backup source
+        # Solution: Split into primary/backup batches, process separately, then merge
         
+        has_source_flag = 'source_provides_adj_ohlc' in df.columns
+        
+        if has_source_flag:
+            primary_mask = df['source_provides_adj_ohlc'] == True
+            primary_df = df[primary_mask].copy()
+            backup_df = df[~primary_mask].copy()
+            
+            if len(backup_df) > 0:
+                logger.warn("mixed_source_batch_detected", {
+                    "primary_symbols": primary_df['symbol'].nunique() if len(primary_df) > 0 else 0,
+                    "backup_symbols": backup_df['symbol'].nunique(),
+                    "total_rows": len(df)
+                })
+        else:
+            # No source flag - assume all primary
+            primary_df = df.copy()
+            backup_df = pd.DataFrame()
+        
+        # Process primary batch (full features)
+        if len(primary_df) > 0:
+            primary_df = self._build_features_inner(primary_df, provides_adj_ohlc=True)
+        
+        # Process backup batch (degraded features)
+        if len(backup_df) > 0:
+            backup_df = self._build_features_inner(backup_df, provides_adj_ohlc=False)
+        
+        # Merge batches
+        df = pd.concat([primary_df, backup_df]).sort_values(['symbol', 'date'])
+        
+        # Handle NaN values in features
+        feature_cols = self._get_feature_columns(df)
+        
+        # Source-aware features_valid calculation
+        if has_source_flag and len(backup_df) > 0:
+            # Mixed batch: only check features for backup source
+            backup_valid_mask = df['source_provides_adj_ohlc'] == False
+            backup_feature_cols = [c for c in feature_cols 
+                                   if c not in ['rsi_14', 'macd_line_pct', 'macd_signal_pct', 
+                                                'pv_correlation_5d', 'adx_14']]
+            
+            # Primary source: check all features
+            primary_valid_mask = df['source_provides_adj_ohlc'] == True
+            
+            # Calculate features_valid for each batch
+            df_primary = df[primary_valid_mask].copy()
+            df_backup = df[backup_valid_mask].copy()
+            
+            if len(df_primary) > 0:
+                nan_mask_primary = df_primary[feature_cols].isna().any(axis=1)
+                inf_mask_primary = np.isinf(df_primary[feature_cols]).any(axis=1)
+                df_primary['features_valid'] = ~(nan_mask_primary | inf_mask_primary)
+            
+            if len(df_backup) > 0:
+                nan_mask_backup = df_backup[backup_feature_cols].isna().any(axis=1)
+                inf_mask_backup = np.isinf(df_backup[backup_feature_cols]).any(axis=1)
+                df_backup['features_valid'] = ~(nan_mask_backup | inf_mask_backup)
+            
+            df = pd.concat([df_primary, df_backup]).sort_values(['symbol', 'date'])
+        else:
+            # Single source batch: original logic
+            nan_mask = df[feature_cols].isna().any(axis=1)
+            inf_mask = np.isinf(df[feature_cols]).any(axis=1)
+            df['features_valid'] = ~(nan_mask | inf_mask)
+        
+        # Keep NaN as NaN (don't fill with 0)
+        df['feature_version'] = self.version
+        
+        elapsed_ms = (time.time() - start_time) * 1000
+        logger.info("features_built", {
+            "version": self.version,
+            "rows": len(df),
+            "primary_rows": len(primary_df) if has_source_flag and len(primary_df) > 0 else len(df),
+            "backup_rows": len(backup_df) if has_source_flag else 0,
+            "elapsed_ms": elapsed_ms
+        })
+        
+        return df
+    
+    def _build_features_inner(self, df: pd.DataFrame, provides_adj_ohlc: bool) -> pd.DataFrame:
+        """
+        Internal feature builder for a single source type.
+        
+        P0-A1 (R21): Extracted to support per-symbol source detection.
+        """
         if not provides_adj_ohlc:
             logger.warn("feature_degradation_ohlc_disabled", {
                 "reason": "backup_source_no_adj_ohlc",
-                "disabled_features": [f"atr_{self.atr_window}", "rsi_14", "macd_line", "macd_signal", "pv_correlation_5d"],
-                "retained_features": ["returns_*d", "rv_*d", "relative_volume_20d", "obv", "sma/ema_zscore", "market_breadth", "vix_change_5d", "pv_divergence_*"]
+                "symbols": df['symbol'].nunique()
             })
         
         # Calculate features by category (using groupby for performance)
@@ -105,6 +189,15 @@ class FeatureEngineer:
                 df['regime_vol_score'] = np.nan
             df['regime_trend_score'] = np.nan
         
+        # Normalize dollar-scale features
+        df['macd_line_pct'] = df['macd_line'] / df['adj_close']
+        df['macd_signal_pct'] = df['macd_signal'] / df['adj_close']
+        
+        # Inject dummy noise feature
+        df = self._inject_dummy_noise(df)
+        
+        return df
+        
         # P0-A1: Normalize dollar-scale features to percentage of price
         # MACD line and signal are in dollar terms, causing 68-252x difference
         # between $10 and $500 stocks. Tree models would split on price level, not signal.
@@ -114,59 +207,6 @@ class FeatureEngineer:
         
         # Inject dummy noise feature (Plan v4)
         df = self._inject_dummy_noise(df)
-        
-        # Handle NaN values in features
-        # Plan requirement: Mark rows with NaN features as invalid instead of filling with 0
-        
-        # FIX A1 (R16): Get feature columns before using them
-        feature_cols = self._get_feature_columns(df)
-        
-        # FIX A2: Source-aware features_valid calculation
-        # When source lacks AdjOHLC, only check features that don't depend on OHLC
-        if not provides_adj_ohlc:
-            # Backup source (Tiingo): only check AdjClose-based features
-            # P0-A2 (R20): Updated exemption list - renamed features from R18
-            feature_cols_to_check = [c for c in feature_cols 
-                                     if c not in ['rsi_14', 'macd_line_pct', 'macd_signal_pct', 
-                                                  'atr_20', 'pv_correlation_5d', 
-                                                  'regime_trend', 'regime_trend_score', 'adx_14']]
-            logger.info("features_valid_backup_source", {
-                "checked_features": len(feature_cols_to_check),
-                "excluded_ohlc_features": 7
-            })
-        else:
-            feature_cols_to_check = feature_cols
-        
-        # FIX A2: Detect both NaN and inf as invalid (only for checked features)
-        nan_mask = df[feature_cols_to_check].isna().any(axis=1)
-        inf_mask = np.isinf(df[feature_cols_to_check]).any(axis=1)
-        invalid_mask = nan_mask | inf_mask
-        df['features_valid'] = ~invalid_mask
-        
-        # Log NaN statistics
-        nan_count = nan_mask.sum()
-        inf_count = inf_mask.sum()
-        if nan_count > 0 or inf_count > 0:
-            logger.warn("features_with_invalid_detected", {
-                "nan_rows": int(nan_count),
-                "inf_rows": int(inf_count),
-                "total_rows": len(df),
-                "invalid_pct": round(100 * (nan_count + inf_count) / len(df), 2)
-            })
-        
-        # Keep NaN as NaN (don't fill with 0) - downstream will skip invalid rows
-        # df[feature_cols] = df[feature_cols].fillna(0)  # REMOVED per Plan v4
-        
-        # Add feature version
-        df['feature_version'] = self.version
-        
-        elapsed_ms = (time.time() - start_time) * 1000
-        logger.info("features_built", {
-            "version": self.version,
-            "n_features": len(feature_cols),
-            "rows": len(df),
-            "elapsed_ms": elapsed_ms
-        })
         
         return df
     
@@ -282,11 +322,11 @@ class FeatureEngineer:
             np.random.RandomState(int(s)).randn() for s in seeds
         ])
         
+        # P2-C2 (R21): Removed mean/std from logs (no information value)
         logger.info("dummy_noise_injected", {
             "seed": self.dummy_seed,
             "method": "per_row_randomstate",
-            "mean": float(df['dummy_noise'].mean()),
-            "std": float(df['dummy_noise'].std())
+            "row_count": len(df)
         })
         
         return df

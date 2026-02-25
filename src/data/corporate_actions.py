@@ -128,9 +128,11 @@ class CorporateActionsHandler:
                 last_price = symbol_df.loc[last_valid, 'raw_close']
                 
                 # Check if data ends before max date
+                # P1-B3 (R21): Use trading days instead of calendar days
+                # 3 trading days across weekend = 5 calendar days, causing false positives
                 max_date = df['date'].max()
                 
-                if last_date < max_date - pd.Timedelta(days=5):
+                if last_date < max_date - pd.offsets.BDay(5):
                     delist_info[symbol] = {
                         'last_date': last_date.strftime('%Y-%m-%d'),
                         'last_price': float(last_price)

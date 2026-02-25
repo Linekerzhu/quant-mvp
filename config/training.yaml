@@ -75,10 +75,11 @@ validation:
     # Minimum data length formula (per plan §6.5):
     # min_days = n_splits * (purge + embargo) / (n_splits - n_test_splits)
     #          = 6 * 70 / 4 = 105 days per test fold pair
-    # FIX B1 (R16): min_data_days must be >= 420 to satisfy fold_size > gap
-    # Previous 252d gave fold_size=42d < gap=70d (math violation)
-    # Conservative: 420d ≈ 1.7 years ensures fold_size=70d >= gap
-    min_data_days: 420  # R16: Fixed from 252 to satisfy CPCV constraints
+    # R16: Fixed from 252 to satisfy CPCV constraints
+    # R21 B1: Updated 420 → 504 to satisfy fold_size > gap (not just >=)
+    #         fold_size = 504/6 = 84d > gap (70d) ✓
+    #         Previous 420d gave fold_size=70d = gap (boundary violation)
+    min_data_days: 504  # R21: 504/6=84 > 70, ensures proper CPCV math
   
   # Walk-Forward validation
   walk_forward:

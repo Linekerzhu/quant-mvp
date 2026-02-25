@@ -277,21 +277,9 @@ class FeatureEngineer:
         
         return df
     
-    def _calc_volume_features(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Calculate volume-based features."""
-        for symbol in df['symbol'].unique():
-            mask = df['symbol'] == symbol
-            
-            # Relative volume vs 20-day average
-            df.loc[mask, 'relative_volume_20d'] = (
-                df.loc[mask, 'volume'] / 
-                df.loc[mask, 'volume'].rolling(window=20, min_periods=1).mean()
-            )
-            
-            # OBV (On-Balance Volume)
-            df.loc[mask, 'obv'] = self._calc_obv(df[mask].copy())
-        
-        return df
+    # P2 (R24-A2a): Deleted dead function _calc_volume_features
+    # This function was never called (replaced by _calc_volume_features_fast)
+    # and contained old buggy relative_volume_20d implementation
     
     def _calc_mean_reversion_features(self, df: pd.DataFrame) -> pd.DataFrame:
         """Calculate mean reversion features."""
@@ -529,13 +517,9 @@ class FeatureEngineer:
             lambda x: x / x.shift(1).rolling(window=20, min_periods=1).mean()
         )
         
-        # OBV per symbol (explicit loop — groupby.apply unreliable across pandas versions)
-        obv_parts = []
-        for symbol, group in df.groupby('symbol'):
-            obv = self._calc_obv(group.reset_index(drop=True))
-            obv.index = group.index
-            obv_parts.append(obv)
-        df['obv'] = pd.concat(obv_parts)
+        # P2 (R24-A2b): Deleted OBV calculation
+        # OBV is excluded in _get_feature_columns and never used
+        # Removing saves O(n×symbols) computation time
         
         return df
     
@@ -572,29 +556,43 @@ class FeatureEngineer:
         Features:
         - vix_change_5d: VIX 5-day change rate (requires external VIX data)
         - market_breadth: Advance/Decline ratio
+        
+        P2 (R24-A1): Only use primary source rows for market_breadth calculation.
+        This prevents backup source symbols (with potentially unreliable data)
+        from contaminating the market-wide breadth signal.
         """
+        # P2 (R24-A1): Use only primary source rows for market-level calculations
+        if 'source_provides_adj_ohlc' in df.columns:
+            df_primary_only = df[df['source_provides_adj_ohlc'] == True]
+        else:
+            df_primary_only = df
+        
         # Market breadth: proportion of stocks advancing vs declining
-        # Calculate daily returns for each symbol
-        # P2-C1: Use transform with explicit fill_method=None to avoid FutureWarning
-        df['daily_return'] = df.groupby('symbol')['adj_close'].transform(
+        # Calculate daily returns for each symbol (primary source only)
+        df_primary_only = df_primary_only.copy()
+        df_primary_only['daily_return'] = df_primary_only.groupby('symbol')['adj_close'].transform(
             lambda x: x.pct_change(fill_method=None)
         )
         
-        # For each date, calculate market breadth
-        df['market_breadth'] = df.groupby('date')['daily_return'].transform(
-            lambda x: (x > 0).sum() / max((x != 0).sum(), 1)  # Advancing / Total non-zero
-        )
+        # For each date, calculate market breadth (from primary sources only)
+        date_breadth = df_primary_only.groupby('date')['daily_return'].agg(
+            lambda x: (x > 0).sum() / max((x != 0).sum(), 1)
+        ).reset_index()
+        date_breadth.columns = ['date', 'market_breadth']
+        
+        # Broadcast back to all rows (including backup sources)
+        df = df.merge(date_breadth, on='date', how='left')
         
         # VIX change rate placeholder (would require VIX data fetch)
         # For now, use realized volatility of SPY-like proxy (median cross-sectional vol)
         # This is a simplified proxy - production should fetch actual VIX
-        df['vix_proxy_5d'] = df.groupby('date')['daily_return'].transform(
+        df_primary_only['vix_proxy_5d'] = df_primary_only.groupby('date')['daily_return'].transform(
             lambda x: x.std() * np.sqrt(252) if len(x) > 1 else 0.15
         )
         
         # 5-day change in vol proxy (fixed: calculate once per date, broadcast to all symbols)
         # First, get unique dates and their vix_proxy values
-        date_vol_proxy = df.groupby('date')['vix_proxy_5d'].first().reset_index()
+        date_vol_proxy = df_primary_only.groupby('date')['vix_proxy_5d'].first().reset_index()
         date_vol_proxy['vix_change_5d'] = date_vol_proxy['vix_proxy_5d'].pct_change(periods=5)
         date_vol_proxy['vix_change_5d'] = date_vol_proxy['vix_change_5d'].clip(-2.0, 2.0)  # P0-A3: Cap outliers
         
@@ -605,11 +603,9 @@ class FeatureEngineer:
         # Merge back to df
         df = df.merge(date_vol_proxy[['date', 'vix_change_5d']], on='date', how='left')
         
-        # Clean up temp column
-        df = df.drop(columns=['daily_return', 'vix_proxy_5d'])
-        
         logger.info("market_features_calculated", {
-            "features": ["market_breadth", "vix_change_5d"]
+            "features": ["market_breadth", "vix_change_5d"],
+            "primary_only": True
         })
         
         return df

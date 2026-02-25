@@ -120,7 +120,9 @@ class RegimeDetector:
         ]
         choices = ['weak', 'moderate', 'strong']
         
-        df['regime_trend'] = np.select(conditions, choices, default='moderate')
+        # P2 (R28-B3): NaN ADX (flat price) should return 'unknown', not 'moderate'
+        # 'moderate' implies a real measurement, 'unknown' indicates insufficient data
+        df['regime_trend'] = np.select(conditions, choices, default='unknown')
         
         # Add continuous score (0-1 scale)
         df['regime_trend_score'] = np.clip(

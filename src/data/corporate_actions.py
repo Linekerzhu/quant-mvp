@@ -199,9 +199,14 @@ class CorporateActionsHandler:
         # P0 (R26-S3): Don't blanket reset can_trade if it already exists
         # validate.py sets can_trade=False for price integrity violations (negative prices, etc.)
         # We must preserve those marks instead of overriding them
+        # 
+        # P0 (R28-S1) FIX: validate creates can_trade column with False for violations
+        # and NaN for other rows. We need to fill NaN→True while preserving False.
         if 'can_trade' not in df.columns:
             df['can_trade'] = True
-        # else: preserve existing can_trade values from validate step
+        else:
+            # Fill NaN with True (normal rows), preserve False (violation rows)
+            df['can_trade'] = df['can_trade'].fillna(True)
         
         for symbol in df['symbol'].unique():
             mask = df['symbol'] == symbol

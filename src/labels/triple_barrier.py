@@ -115,6 +115,10 @@ class TripleBarrierLabeler:
                     symbol_df, i, trigger_date
                 )
                 
+                # P1 (R27-A3): Check for invalid exit (NaN return)
+                # Mark event as invalid if exit_price was NaN
+                event_is_valid = barrier not in ['time_invalid_exit']
+                
                 # Register this event as active
                 self._active_events[symbol] = (trigger_date, exit_date)
                 
@@ -124,7 +128,7 @@ class TripleBarrierLabeler:
                 df.loc[(df['symbol'] == symbol) & (df['date'] == trigger_date), 'label_return'] = ret
                 df.loc[(df['symbol'] == symbol) & (df['date'] == trigger_date), 'label_holding_days'] = actual_holding_days
                 df.loc[(df['symbol'] == symbol) & (df['date'] == trigger_date), 'label_exit_date'] = exit_date  # FIX A1 (R17)
-                df.loc[(df['symbol'] == symbol) & (df['date'] == trigger_date), 'event_valid'] = True
+                df.loc[(df['symbol'] == symbol) & (df['date'] == trigger_date), 'event_valid'] = event_is_valid
         
         valid_count = df['event_valid'].sum()
         
@@ -259,12 +263,17 @@ class TripleBarrierLabeler:
             idx = entry_idx + day
             
             # FIX B1 (R17): Use adj OHLC if available, else raw OHLC
+            # P1 (R27-A2): Tiingo backup path - use adj_close for barrier comparison
+            # When entry_price is adj_close, barriers must also use adj_close
+            # Raw prices after split would trigger false barriers
             if has_adj_ohlc:
                 day_high = symbol_df.loc[idx, 'adj_high']
                 day_low = symbol_df.loc[idx, 'adj_low']
             else:
-                day_high = symbol_df.loc[idx, 'raw_high'] if 'raw_high' in symbol_df.columns else symbol_df.loc[idx, 'adj_close']
-                day_low = symbol_df.loc[idx, 'raw_low'] if 'raw_low' in symbol_df.columns else symbol_df.loc[idx, 'adj_close']
+                # P1 (R27-A2): Use adj_close for barrier check (consistent with entry_price)
+                # Fallback to raw only if adj_close unavailable
+                day_high = symbol_df.loc[idx, 'adj_close']
+                day_low = symbol_df.loc[idx, 'adj_close']
             
             exit_date = symbol_df.loc[idx, 'date']
             
@@ -292,6 +301,14 @@ class TripleBarrierLabeler:
         exit_idx = min(entry_idx + self.max_holding_days, len(symbol_df) - 1)
         exit_date = symbol_df.loc[exit_idx, 'date']
         exit_price = symbol_df.loc[exit_idx, 'adj_close']
+        
+        # P1 (R27-A3): Check exit_price validity
+        # NaN exit_price would produce NaN return → pollutes training data
+        if pd.isna(exit_price) or exit_price <= 0:
+            # Cannot compute valid return - mark as invalid event
+            # This will be caught by label_events and set event_valid=False
+            return (0, 'time_invalid_exit', np.nan, self.max_holding_days, exit_date)
+        
         ret = np.log(exit_price / entry_price)  # B24: Log return
         
         # P0-A2: AFML Ch3.4 - time barrier = no clear outcome → neutral label

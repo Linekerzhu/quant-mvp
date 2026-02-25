@@ -28,7 +28,8 @@ class UniverseManager:
         
         # Component change handling
         self.cold_start_days = self.config['component_changes']['new_component']['min_history_days']
-        self.exit_slippage = self.config['component_changes']['removed_component']['exit_limit_slippage']
+        # P0 (R26-S1): Fix key name - YAML uses 'limit_slippage' not 'exit_limit_slippage'
+        self.exit_slippage = self.config['component_changes']['removed_component']['limit_slippage']
     
     def get_sp500_tickers(self) -> List[str]:
         """Get current S&P 500 tickers."""
@@ -83,7 +84,10 @@ class UniverseManager:
         if df.empty or 'date' not in df.columns:
             return []
         
-        recent = df[df['date'] >= df['date'].max() - pd.Timedelta(days=lookback_days)]
+        # P1 (R26-A1): Use BusinessDay instead of calendar days
+        # 20 calendar days ≈ 15 trading days, causing most symbols to be rejected
+        from pandas.tseries.offsets import BDay
+        recent = df[df['date'] >= df['date'].max() - BDay(lookback_days)]
         
         liquid = []
         

@@ -173,7 +173,8 @@ class DataValidator:
                 continue
             
             # Calculate returns using adjusted close
-            returns = symbol_df['adj_close'].pct_change().abs()
+            # P2-C1: Explicit fill_method=None to avoid FutureWarning
+            returns = symbol_df['adj_close'].pct_change(fill_method=None).abs()
             
             # Detect jumps
             jump_mask = returns > self.max_daily_return

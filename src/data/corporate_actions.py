@@ -51,8 +51,9 @@ class CorporateActionsHandler:
                 continue
             
             # Calculate returns
-            raw_returns = symbol_df['raw_close'].pct_change().abs()
-            adj_returns = symbol_df['adj_close'].pct_change().abs()
+            # P2-C1: Explicit fill_method=None to avoid FutureWarning
+            raw_returns = symbol_df['raw_close'].pct_change(fill_method=None).abs()
+            adj_returns = symbol_df['adj_close'].pct_change(fill_method=None).abs()
             
             # Detect splits
             # FIX B3: Use >= to catch exact 2:1 splits (|return| = 0.50)

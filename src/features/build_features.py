@@ -106,9 +106,9 @@ class FeatureEngineer:
             df['regime_trend_score'] = np.nan
         
         # P0-A1: Normalize dollar-scale features to percentage of price
-        # ATR, MACD line, MACD signal are in dollar terms, causing 68-252x difference
+        # MACD line and signal are in dollar terms, causing 68-252x difference
         # between $10 and $500 stocks. Tree models would split on price level, not signal.
-        df['atr_20_pct'] = df[f'atr_{self.atr_window}'] / df['adj_close']
+        # R19 B3: Removed atr_20_pct (r=0.897 with rv_20d) - use rv_20d as volatility proxy
         df['macd_line_pct'] = df['macd_line'] / df['adj_close']
         df['macd_signal_pct'] = df['macd_signal'] / df['adj_close']
         
@@ -509,7 +509,10 @@ class FeatureEngineer:
         """
         # Market breadth: proportion of stocks advancing vs declining
         # Calculate daily returns for each symbol
-        df['daily_return'] = df.groupby('symbol')['adj_close'].pct_change()
+        # P2-C1: Use transform with explicit fill_method=None to avoid FutureWarning
+        df['daily_return'] = df.groupby('symbol')['adj_close'].transform(
+            lambda x: x.pct_change(fill_method=None)
+        )
         
         # For each date, calculate market breadth
         df['market_breadth'] = df.groupby('date')['daily_return'].transform(

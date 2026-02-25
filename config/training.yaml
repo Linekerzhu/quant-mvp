@@ -11,6 +11,29 @@ model:
   alternatives:
     - xgboost
 
+# =============================================================================
+# Label Strategy (R19 B1 Fix - Option B)
+# =============================================================================
+# R18 A2 changed time barrier to label=0 (AFML Ch3.4 recommendation).
+# This creates 3-class labels: {-1: loss, 0: time/neutral, +1: profit}
+# 
+# Option B chosen: Filter label=0, train binary classifier on {-1, +1}
+# - Rationale: AFML Ch3.5 recommends binary classification for signal clarity
+# - Implementation: Training pipeline filters df[df['label'] != 0]
+# - Impact: 35% of events (time barriers) excluded from training
+# - Label mapping: {-1 → 0, +1 → 1} for LightGBM binary objective
+# =============================================================================
+label:
+  strategy: binary_filtered
+  classes:
+    -1: loss_barrier
+    0: time_barrier  # Excluded from training
+    +1: profit_barrier
+  filter_neutral: true  # Remove label=0 before training
+  mapping:
+    -1: 0  # Remap for binary classification
+    +1: 1
+
 # LightGBM parameters
 lightgbm:
   objective: binary

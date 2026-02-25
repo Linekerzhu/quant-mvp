@@ -2,7 +2,7 @@
 # Feature registry with versioning
 
 # Feature version - increment on any change
-version: 1
+version: 2  # R19 B2: Updated from v1 to reflect R17-R19 changes
 
 # Feature categories
 categories:
@@ -24,11 +24,12 @@ categories:
       - name: rsi_14
         description: RSI(14)
         lookback: 14
-      - name: macd_line
-        description: MACD line (12,26,9)
+      # R19 B2: Replaced dollar-scale with normalized versions
+      - name: macd_line_pct
+        description: MACD line as % of price (normalized)
         lookback: 26
-      - name: macd_signal
-        description: MACD signal line
+      - name: macd_signal_pct
+        description: MACD signal as % of price (normalized)
         lookback: 35
   
   volatility:
@@ -43,10 +44,8 @@ categories:
       - name: rv_60d
         description: Realized volatility (60-day)
         lookback: 60
-      # FIX A1: ATR window matches event_protocol.yaml (20 days)
-      - name: atr_20
-        description: Average True Range (20)
-        lookback: 20
+      # R19 B3: Removed atr_20_pct (r=0.897 with rv_20d)
+      # Use rv_20d as primary volatility measure instead
   
   volume:
     description: Volume-based indicators
@@ -54,10 +53,7 @@ categories:
       - name: relative_volume_20d
         description: Volume vs 20-day average
         lookback: 20
-      - name: obv
-        description: On-Balance Volume
-        lookback: 1  # Cumulative
-      # FIX B1: Rename to match actual output from build_features.py
+      # R19 B2: Removed obv (500x cross-symbol variance)
       - name: pv_divergence_bull
         description: Price up volume down (weak bullish signal)
         lookback: 5
@@ -77,29 +73,22 @@ categories:
       - name: price_vs_sma60_zscore
         description: Price vs SMA(60) z-score
         lookback: 60
-      - name: price_vs_ema20_zscore
-        description: Price vs EMA(20) z-score
-        lookback: 20
+      # R19 B2: Removed price_vs_ema20_zscore (r=0.97 with sma20_zscore)
   
   market_regime:
     description: Market regime indicators (soft features)
     features:
       - name: vix_change_5d
-        description: VIX 5-day change rate
+        description: VIX 5-day change rate (clipped to [-2, 2])
         lookback: 5
       - name: market_breadth
         description: Advance/Decline ratio
         lookback: 1
-      # FIX B1: Use numeric scores instead of string labels
-      - name: regime_vol_score
-        description: Volatility regime score (continuous, 0-1)
-        lookback: 20
-      - name: regime_trend_score
-        description: Trend regime score (continuous, 0-1)
-        lookback: 14
       - name: adx_14
         description: Average Directional Index (14)
         lookback: 14
+      # R19 B2: Removed regime_vol_score (r=0.90 with rv_20d)
+      # R19 B2: Removed regime_trend_score (r=0.82 with adx_14)
 
 # Dummy feature for overfitting detection (Plan v4)
 dummy_features:
@@ -123,7 +112,19 @@ importance:
   tracking: true
   history_days: 252  # Keep 1 year of importance history
 
-# Notes on feature naming alignment:
-# - build_features.py outputs: pv_divergence_bull, pv_divergence_bear, pv_correlation_5d
-# - build_features.py outputs: regime_vol_score, regime_trend_score, adx_14 (numeric)
-# - String columns (regime_volatility, regime_trend, regime_combined) are excluded in _get_feature_columns
+# =============================================================================
+# R19 Changelog (v1 → v2)
+# =============================================================================
+# Removed features:
+# - macd_line, macd_signal (dollar-scale, 53x cross-price variance)
+# - atr_20 (dollar-scale, redundant with atr_20_pct)
+# - obv (absolute volume, 500x cross-symbol variance)
+# - regime_vol_score (r=0.90 with rv_20d)
+# - regime_trend_score (r=0.82 with adx_14)
+# - price_vs_ema20_zscore (r=0.97 with price_vs_sma20_zscore)
+#
+# Added features:
+# - macd_line_pct, macd_signal_pct (normalized to % of price)
+#
+# Note: atr_20_pct was added in R18 but removed in R19 B3 (redundant with rv_20d)
+# =============================================================================

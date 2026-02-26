@@ -272,9 +272,11 @@ class TripleBarrierLabeler:
         loss_barrier = entry_price * (1 - self.sl_mult * atr / entry_price)
         
         # Check each day in holding period
+        # R33-A1: Start from day=0 (entry day T+1) instead of day=1
+        # Entry day barrier check is critical for high-volatility scenarios
         max_day = min(self.max_holding_days + 1, len(symbol_df) - entry_idx)
         
-        for day in range(1, max_day):
+        for day in range(0, max_day):  # R33-A1: Changed from range(1, max_day)
             idx = entry_idx + day
             
             # FIX B1 (R17): Use adj OHLC if available, else raw OHLC
@@ -311,27 +313,32 @@ class TripleBarrierLabeler:
             else:
                 day_open = symbol_df.loc[idx, 'adj_close']
             
-            # Skip if day_open is NaN (can't determine gap)
-            if pd.isna(day_open):
-                continue
-            
-            # STEP 1: Gap Execution (跳空执行 - 最优先)
-            # If open already crossed barrier, use actual open price (not barrier)
-            # Loss gap takes priority over profit gap (pessimism)
-            
-            if day_open <= loss_barrier:
-                # 开盘直接跳穿止损 → 用实际开盘价结算（更惨）
-                exit_price = day_open
-                ret = np.log(exit_price / entry_price)
-                return (-1, 'loss_gap', ret, day, exit_date)
-            
-            if day_open >= profit_barrier:
-                # 开盘直接跳穿止盈 → 用实际开盘价结算（比barrier更好但也更真实）
-                exit_price = day_open
-                ret = np.log(exit_price / entry_price)
-                return (1, 'profit_gap', ret, day, exit_date)
+            # R33-A1: Skip gap detection on day=0 (entry day)
+            # On entry day, open IS the entry_price, so gap is physically impossible
+            # Gap detection only applies to day >= 1
+            if day >= 1:
+                # Skip if day_open is NaN (can't determine gap)
+                if pd.isna(day_open):
+                    continue
+                
+                # STEP 1: Gap Execution (跳空执行 - 最优先)
+                # If open already crossed barrier, use actual open price (not barrier)
+                # Loss gap takes priority over profit gap (pessimism)
+                
+                if day_open <= loss_barrier:
+                    # 开盘直接跳穿止损 → 用实际开盘价结算（更惨）
+                    exit_price = day_open
+                    ret = np.log(exit_price / entry_price)
+                    return (-1, 'loss_gap', ret, day, exit_date)
+                
+                if day_open >= profit_barrier:
+                    # 开盘直接跳穿止盈 → 用实际开盘价结算（比barrier更好但也更真实）
+                    exit_price = day_open
+                    ret = np.log(exit_price / entry_price)
+                    return (1, 'profit_gap', ret, day, exit_date)
             
             # STEP 2: Collision Detection (同日双穿检测)
+            # R33-A1: Also applies to day=0
             # If both barriers hit same day, force loss (pessimism)
             # Day-frequency can't determine intraday order
             
@@ -342,6 +349,7 @@ class TripleBarrierLabeler:
                 return (-1, 'loss_collision', ret, day, exit_date)
             
             # STEP 3: Normal Path (正常路径)
+            # R33-A1: Also applies to day=0
             # Loss check before profit check (pessimism)
             
             if day_low <= loss_barrier:

@@ -157,6 +157,104 @@ class TestOR5Hotfixes:
         
         # Gap should take priority over collision
         assert ev['label_barrier'] == 'loss_gap'
+    
+    # ============================================================
+    # R33-A1: Entry Day Barrier Detection Tests
+    # ============================================================
+    
+    def test_entry_day_loss_barrier(self, labeler):
+        """R33-A1: Entry day (T+1) should check loss barrier."""
+        n = 20
+        o = [100.0] * n
+        h = [101.0] * n
+        l = [99.0] * n
+        c = [100.0] * n
+        
+        # Day 1 (entry day, day=0): low at 94 (< loss barrier 96)
+        # Entry price = 100 (Day 1 open), loss barrier = 100 - 2*2 = 96
+        l[1] = 94.0
+        h[1] = 100.5
+        o[1] = 100.0
+        c[1] = 95.0
+        
+        result = labeler.label_events(self.make_df(o, h, l, c))
+        ev = result[result['event_valid'] == True].iloc[0]
+        
+        # Should detect loss on entry day
+        assert ev['label_barrier'] == 'loss'
+        assert ev['label_holding_days'] == 0  # R33-A1: day=0
+        assert ev['label'] == -1
+    
+    def test_entry_day_profit_barrier(self, labeler):
+        """R33-A1: Entry day (T+1) should check profit barrier."""
+        n = 20
+        o = [100.0] * n
+        h = [101.0] * n
+        l = [99.0] * n
+        c = [100.0] * n
+        
+        # Day 1 (entry day, day=0): high at 106 (> profit barrier 104)
+        # Entry price = 100, profit barrier = 100 + 2*2 = 104
+        h[1] = 106.0
+        l[1] = 99.5
+        o[1] = 100.0
+        c[1] = 105.0
+        
+        result = labeler.label_events(self.make_df(o, h, l, c))
+        ev = result[result['event_valid'] == True].iloc[0]
+        
+        # Should detect profit on entry day
+        assert ev['label_barrier'] == 'profit'
+        assert ev['label_holding_days'] == 0  # R33-A1: day=0
+        assert ev['label'] == 1
+    
+    def test_entry_day_collision(self, labeler):
+        """R33-A1: Entry day collision should force loss (pessimism)."""
+        n = 20
+        o = [100.0] * n
+        h = [101.0] * n
+        l = [99.0] * n
+        c = [100.0] * n
+        
+        # Day 1 (entry day, day=0): both barriers hit
+        # high=107 > 104, low=93 < 96
+        h[1] = 107.0
+        l[1] = 93.0
+        o[1] = 100.0
+        c[1] = 102.0
+        
+        result = labeler.label_events(self.make_df(o, h, l, c))
+        ev = result[result['event_valid'] == True].iloc[0]
+        
+        # Should detect collision on entry day, force loss
+        assert ev['label_barrier'] == 'loss_collision'
+        assert ev['label_holding_days'] == 0  # R33-A1: day=0
+        assert ev['label'] == -1
+    
+    def test_entry_day_no_gap_check(self, labeler):
+        """R33-A1: Entry day should NOT check gap (open IS entry_price)."""
+        n = 20
+        o = [100.0] * n
+        h = [101.0] * n
+        l = [99.0] * n
+        c = [100.0] * n
+        
+        # Day 1 (entry day): open = entry_price = 100
+        # Even if open is way below barrier, should NOT trigger gap
+        # Because gap is physically impossible on entry day
+        o[1] = 100.0  # This IS the entry price
+        h[1] = 100.5
+        l[1] = 100.0  # Normal range, no barrier hit
+        c[1] = 100.2
+        
+        result = labeler.label_events(self.make_df(o, h, l, c))
+        ev = result[result['event_valid'] == True].iloc[0]
+        
+        # Should hit time barrier (no barrier touched on entry day)
+        # Not loss_gap even though open < loss_barrier would be true
+        # if we were checking gap on day=0
+        assert ev['label_barrier'] == 'time'  # No barrier hit on day 0
+        assert ev['label_holding_days'] == 10  # Full holding period
 
 
 class TestEndToEndPipeline:

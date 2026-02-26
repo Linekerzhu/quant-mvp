@@ -66,8 +66,8 @@ class TestTripleBarrierLabeler:
                 'profit_gap', 'loss_gap', 'loss_collision'
             ]).all()
             
-            # Holding days should be positive
-            assert (valid['label_holding_days'] > 0).all()
+            # R33-A1: Holding days can be 0 (entry day exit) or positive
+            assert (valid['label_holding_days'] >= 0).all()
     
     def test_label_distribution(self, labeler, mock_prices):
         """Test label distribution statistics."""

@@ -56,9 +56,19 @@ class FeatureEngineer:
             if feature.get('requires_ohlc', False):
                 exempt_features.append(feature['name'])
         
+        # R29-A3: Hardcoded OHLC-dependent features not in YAML
+        # These features are computed internally but not defined in config
+        hardcoded_ohlc_features = [
+            'atr_20',           # Average True Range (needs high/low)
+            'regime_trend_score',  # Correlated with ADX (needs high/low)
+        ]
+        exempt_features.extend(hardcoded_ohlc_features)
+        
         # OR4-P2-1 (R25): Remove feature names from logs (no info value, potential leak)
         logger.info("ohlc_exempt_features_built", {
-            "count": len(exempt_features)
+            "count": len(exempt_features),
+            "from_yaml": len(exempt_features) - len(hardcoded_ohlc_features),
+            "hardcoded": len(hardcoded_ohlc_features)
         })
         
         return exempt_features
@@ -453,33 +463,28 @@ class FeatureEngineer:
     
     def _calc_momentum_features_fast(self, df: pd.DataFrame, provides_adj_ohlc: bool = True) -> pd.DataFrame:
         """Calculate momentum features using groupby (optimized)."""
-        # Log returns
+        # Log returns (only needs adj_close)
         for window in [5, 10, 20, 60]:
             df[f'returns_{window}d'] = df.groupby('symbol')['adj_close'].transform(
                 lambda x: np.log(x / x.shift(window))
             )
         
-        if provides_adj_ohlc:
-            # RSI using groupby (requires reliable OHLC)
-            df['rsi_14'] = df.groupby('symbol')['adj_close'].transform(
-                lambda x: self._calc_rsi(x, window=14)
-            )
-            
-            # MACD using groupby
-            macd_results = df.groupby('symbol')['adj_close'].apply(
-                lambda x: self._calc_macd(x)
-            )
-            df['macd_line'] = np.nan
-            df['macd_signal'] = np.nan
-            for symbol, (macd, signal) in macd_results.items():
-                mask = df['symbol'] == symbol
-                df.loc[mask, 'macd_line'] = macd.values
-                df.loc[mask, 'macd_signal'] = signal.values
-        else:
-            # Set OHLC-dependent features to NaN when source doesn't provide reliable data
-            df['rsi_14'] = np.nan
-            df['macd_line'] = np.nan
-            df['macd_signal'] = np.nan
+        # R29-A3: RSI/MACD only need adj_close, NOT OHLC
+        # These should be calculated for all sources
+        df['rsi_14'] = df.groupby('symbol')['adj_close'].transform(
+            lambda x: self._calc_rsi(x, window=14)
+        )
+        
+        # MACD using groupby
+        macd_results = df.groupby('symbol')['adj_close'].apply(
+            lambda x: self._calc_macd(x)
+        )
+        df['macd_line'] = np.nan
+        df['macd_signal'] = np.nan
+        for symbol, (macd, signal) in macd_results.items():
+            mask = df['symbol'] == symbol
+            df.loc[mask, 'macd_line'] = macd.values
+            df.loc[mask, 'macd_signal'] = signal.values
         
         return df
     
@@ -646,21 +651,18 @@ class FeatureEngineer:
         df['pv_divergence_bear'] = ((df['price_trend_5d'] < 0) & 
                                      (df['volume_trend_5d'] < 0)).astype(int)
         
-        if provides_adj_ohlc:
-            # Continuous divergence score (requires more reliable data)
-            corr_parts = []
-            for symbol, group in df.groupby('symbol'):
-                corr = group['price_trend_5d'].rolling(5, min_periods=3).corr(
-                    group['volume_trend_5d']
-                )
-                corr_parts.append(corr)
-            df['pv_correlation_5d'] = pd.concat(corr_parts)
-            # P0-A2 (R19): Fill NaN from constant-volume edge cases
-            # rolling.corr() returns NaN when variance=0; treat as neutral (0 correlation)
-            df['pv_correlation_5d'] = df['pv_correlation_5d'].fillna(0.0)
-        else:
-            # Disable correlation feature when OHLC unreliable
-            df['pv_correlation_5d'] = np.nan
+        # R29-A3: pv_correlation_5d only needs adj_close + volume, NOT OHLC
+        # Calculate for all sources
+        corr_parts = []
+        for symbol, group in df.groupby('symbol'):
+            corr = group['price_trend_5d'].rolling(5, min_periods=3).corr(
+                group['volume_trend_5d']
+            )
+            corr_parts.append(corr)
+        df['pv_correlation_5d'] = pd.concat(corr_parts)
+        # P0-A2 (R19): Fill NaN from constant-volume edge cases
+        # rolling.corr() returns NaN when variance=0; treat as neutral (0 correlation)
+        df['pv_correlation_5d'] = df['pv_correlation_5d'].fillna(0.0)
         
         # Clean up temp columns
         df = df.drop(columns=['price_trend_5d', 'volume_trend_5d'])

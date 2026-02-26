@@ -56,8 +56,12 @@ lightgbm:
   
   verbose: -1
   
-  # Early stopping
-  early_stopping_rounds: 50
+  # ⚠️ OR5-CODE T5: 以下参数属于 lgb.train() 的 callbacks，不是模型参数
+  # 在调用时必须通过 .pop() 从参数字典中提取:
+  #   n_estimators = lgb_params.pop('n_estimators', 500)
+  #   early_stopping_rounds = lgb_params.pop('early_stopping_rounds', 50)
+  # 参考: docs/PHASE_C_IMPL_GUIDE.md Step 4 LightGBM 调用方式
+  early_stopping_rounds: 50  # (callback) Early stopping patience
   
   # ALLOWED SEARCH SPACE (for hyperparameter tuning only)
   # max_depth ∈ {2, 3}

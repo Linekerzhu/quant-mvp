@@ -429,10 +429,11 @@ embargo_window = max(feature_lookback, execution_delay, corporate_action_latency
 **CPCV 数据长度警告**（R5 A1 修复）：
 > 最小数据长度公式：`min_days = n_splits × (purge + embargo) / (n_splits - n_test_splits)`
 > 
-> 示例（n_splits=6, n_test=2, gap=70d）：`min_days = 6 × 70 / 4 = 105d` per test fold pair
+> 示例（n_splits=6, n_test=2, gap=50d）：`min_days = 6 × 50 / 4 = 75d` per test fold pair
 > 
-> 原配置（n_splits=10）在 2 年数据（504d）下 fold_size=50d < gap=70d，导致 139% 数据被清洗，训练不足。
-> **已修复**：training.yaml 中 n_splits 从 10 降至 6，确保 fold_size=84d > gap=70d。
+> 历史注记：原配置（n_splits=10, embargo=60d）在 2 年数据（504d）下 fold_size=50d < gap=70d，
+> 导致训练数据不足。R27-B1 将 n_splits 从 10 降至 6、embargo 从 60d 降至 40d，
+> 当前 gap=50d（purge=10 + embargo=40），fold_size=105d > gap，所有 path 均有 ≥ 238d 有效训练数据。
 
 > 此公式预留了 `corporate_action_latency` 接口。若未来引入非 PIT 的公司行为数据，只需调整此参数而非重构逻辑。
 
@@ -556,6 +557,7 @@ embargo_window = max(feature_lookback, execution_delay, corporate_action_latency
 - 实现 Fixed-Width Window 分数阶差分，替代粗暴的对数收益率。
 - 在仅限 Train 集上通过 ADF 检验（p < 0.05）寻找保留最大记忆的最小 d 值。
 - d 值在 CPCV 每个 fold 内独立拟合（防止信息泄漏）。
+- **Burn-in 衔接规则**：FracDiff 在全量时间轴上预计算（纯因果运算，不构成泄漏），ADF 检验寻找最优 d 时严格只看 Train index。禁止先切分再算差分，否则 Embargo 断层会烧毁大量数据。详见实施指南。
 - 生成 `fracdiff_close` 特征列。美股日频 d 通常在 0.35 ~ 0.65。
 - 新增文件：`src/features/fracdiff.py`、`tests/test_fracdiff.py`。
 

@@ -225,6 +225,48 @@ def _embargo(self, train_indices, test_end_date, full_df):
     """
 ```
 
+### ⚠️ Embargo 与 Feature Lookback 的 20 天缺口
+
+当前 `embargo_window=40 < feature_lookback=60`。这意味着 test 结束后第 41-60 天的 train 样本，
+其特征会回溯进入 test 集的最后几天。
+
+**问题**：
+```
+Test End: 2021-09-30
+Embargo Window: 40 days → 禁止 train 样本日期在 2021-10-01 ~ 2021-11-09
+Feature Lookback: 60 days → 样本在 2021-11-10 计算特征时，会回溯到 2021-09-11
+
+风险：2021-11-10 的 train 样本，其 60 天特征窗口与 test 集有 19 天重叠
+```
+
+**在实现 `_embargo()` 时，必须选择以下方案之一**：
+
+**选项 A（简单，推荐 MVP）**：将 embargo 实际执行值设为 `max(embargo_window, feature_lookback)=60`
+- 优点：实现简单，零泄漏风险
+- 缺点：损失约 8% 训练数据
+
+**选项 B（精确，保留数据）**：embargo=40，但对 test_end 后 40-60 天的样本额外检查
+```python
+# 在 _embargo() 中增加后向特征回溯检查
+for idx in train_indices_after_embargo:
+    sample_date = full_df.loc[idx, 'date']
+    feature_start = sample_date - pd.Timedelta(days=feature_lookback)
+    if feature_start < test_end_date:
+        # 特征回溯穿透 test 集，额外 Drop
+        train_indices_after_embargo.remove(idx)
+```
+- 优点：保留更多训练数据
+- 缺点：实现复杂，需要传入 feature_lookback 参数
+
+**推荐**：Phase C Step 2 开工时默认使用 **选项 A**，Phase C 完成后可考虑优化为选项 B。
+
+**验证测试**：
+```python
+# tests/test_cpcv.py 必须包含
+test_embargo_covers_feature_lookback: 
+    "验证 test_end 后 feature_lookback(60) 天内无 train 样本"
+```
+
 ### 自证方法（审计官会检查）
 
 实现完成后，必须能输出以下日志：
@@ -326,6 +368,26 @@ def find_optimal_d(
 # d 的搜索在训练脚本中完成
 ```
 
+### ⚠️ Burn-in 与 CPCV 断层的正确衔接（审计官预警）
+
+这是一个极易踩的工程陷阱：
+
+**❌ 错误做法**：先 CPCV 切分出 Train 集 → 再在 Train 集上算 FracDiff
+
+问题：CPCV 的 Purge+Embargo 会在时间轴上挖出空洞（不连续），每个断层都会导致 FracDiff
+前 `window`（默认 100）天的数据变成 NaN，大量有效训练样本被白白烧毁。
+
+**✅ 正确做法**：两步分离
+
+第一步：在全量时间轴上预计算所有候选 d 值的 FracDiff 列。
+这一步不构成泄漏，因为 FracDiff 只向历史回看（纯因果运算）。
+
+第二步：CPCV 切分后，ADF 检验找最优 d 时只看 Train 的 index。
+
+第三步：用 optimal_d 对应的预计算列作为该 fold 的特征。
+
+**总结**：预计算全量 ≠ 泄漏（差分只看过去），找 d 只看 Train = 隔离。
+
 ### ADF 检验用法
 
 ```python
@@ -408,8 +470,16 @@ import yaml
 with open('config/training.yaml') as f:
     cfg = yaml.safe_load(f)
 
-lgb_params = cfg['lightgbm']
-# lgb_params 已经包含 max_depth=3, num_leaves=7 等硬化参数
+lgb_params = cfg['lightgbm'].copy()
+
+# ⚠️ OR5-CODE T5: 这些参数必须从 params dict 中 .pop() 出来
+# 因为它们是 lgb.train() 的参数，不是 LightGBM 模型参数
+# 直接传入会触发 LightGBM "unknown parameter" warning
+n_estimators = lgb_params.pop('n_estimators', 500)
+early_stopping_rounds = lgb_params.pop('early_stopping_rounds', 50)
+
+# lgb_params 现在只包含模型超参（max_depth, num_leaves, 等）
+# 这些是 OR5 硬化的参数，严禁修改
 
 train_data = lgb.Dataset(
     X_train, 
@@ -420,9 +490,9 @@ train_data = lgb.Dataset(
 model = lgb.train(
     lgb_params,
     train_data,
-    num_boost_round=lgb_params.pop('n_estimators', 500),
+    num_boost_round=n_estimators,  # 使用 .pop() 出来的值
     valid_sets=[valid_data],
-    callbacks=[lgb.early_stopping(lgb_params.pop('early_stopping_rounds', 50))]
+    callbacks=[lgb.early_stopping(early_stopping_rounds)]  # 使用 .pop() 出来的值
 )
 
 # 输出概率
@@ -439,10 +509,17 @@ dummy_rank = ...  # dummy_noise 的排名
 assert dummy_rank > len(features) * 0.25, "Overfitting detected!"
 
 # 2. PBO (Probability of Backtest Overfitting)
-# 15 条 CPCV path 中，如果超过 50% 的 path 在 test 上表现不如随机
-# 则 PBO > 0.5，必须拒绝模型
+# plan.md 三档门控:
+#   PBO < 0.3 → Pass（进入 Phase C+ 或 Phase D）
+#   0.3 ≤ PBO < 0.5 → Warning（允许继续但必须人工复核，报告中标红）
+#   PBO ≥ 0.5 → Hard Reject（回退 Phase B 调整特征/标签）
 pbo = calculate_pbo(path_results)
-assert pbo < 0.5, f"PBO={pbo:.2f} >= 0.5, model rejected!"
+if pbo >= 0.5:
+    raise ValueError(f"HARD REJECT: PBO={pbo:.2f} >= 0.5, model rejected!")
+elif pbo >= 0.3:
+    logger.warning(f"PBO WARNING: PBO={pbo:.2f} in [0.3, 0.5) — requires manual review")
+    report['pbo_warning'] = True  # 报告中必须标红
+    # 不阻断，但必须人工复核
 ```
 
 ### 回测报告扣减（硬编码）
@@ -507,7 +584,7 @@ tests/
 | Step 1 完成 | base_model → triple_barrier 跑通，side 无前视 | side 用了 T 日价格 |
 | Step 2 完成 | 15 条 CPCV path，全部 ≥ 200 天训练数据 | train/test 有时间交集 |
 | Step 3 完成 | ADF p < 0.05 且与原序列相关性 > 0 | d 在 test 集上拟合 |
-| Step 4 完成 | 15 path AUC 汇总 + PBO < 0.5 + 哨兵通过 | PBO ≥ 0.5 |
+| Step 4 完成 | 15 path AUC 汇总 + PBO < 0.3 (Pass) 或 0.3-0.5 (Warning+人工复核) + 哨兵通过 | PBO ≥ 0.5 |
 
 **每个 Step 完成后都要跑全量测试确认不回归，然后单独 commit + push。**
 
@@ -520,5 +597,5 @@ tests/
 | FracDiff 后 ADF 仍不平稳 | 增大 d 值或增大窗口 window |
 | CPCV purge 后训练数据太少 | 检查 embargo_window 是否过大，或数据总量不足 |
 | LightGBM AUC ≈ 0.50 | 正常。日频美股信噪比极低，0.52 就值得认真对待 |
-| PBO > 0.5 | 模型过拟合，需要进一步压制（减 num_leaves、增 min_data_in_leaf） |
+| PBO ≥ 0.3 | 模型过拟合警告。若 PBO < 0.5：检查特征质量、考虑增加正则化（减 num_leaves、增 min_data_in_leaf）；若 PBO ≥ 0.5：必须回退 Phase B 重新调整 |
 | dummy_noise 进入 top 25% | 过拟合确认，拒绝当前模型，回查特征 |

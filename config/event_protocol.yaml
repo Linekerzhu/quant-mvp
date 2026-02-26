@@ -63,6 +63,18 @@ embargo:
   execution_delay: 1    # Signal to execution delay
   corporate_action_latency: 0  # Corporate action info delay
   total_days: 40  # P1 (R28-A1): Synced with training.yaml (was 60)
+  
+  # ⚠️ OR5-CODE T7: embargo_window(40) < feature_lookback(60)
+  # plan.md §6.5 公式要求 embargo = max(feature_lookback,...) = 60
+  # R27-B1 为保证 CPCV 训练数据充足减至 40
+  # Phase C Step 2 必须在 PurgedKFold._embargo() 中补偿这 20 天差距
+  # 
+  # 选项 A（简单，推荐 MVP）: 恢复 embargo=60（损失约 8% 训练数据）
+  # 选项 B（精确，保留数据）: embargo=40 + 后向特征回溯检查
+  #   对 test_end 后 40-60 天的 train 样本额外检查
+  #   若 sample_date - feature_lookback < test_end，则 Drop
+  # 
+  # 当前决策：Phase C Step 2 开工时由工程 Agent 选择并记录
 
 # Class Imbalance
 class_imbalance:

@@ -28,15 +28,15 @@ categories:
       - name: rsi_14
         description: RSI(14)
         lookback: 14
-        requires_ohlc: true  # Requires reliable OHLC for calculation
+        requires_ohlc: false  # OR5-CODE T6: Uses adj_close only (EMA-based)
       - name: macd_line_pct
         description: MACD line as % of price (normalized)
         lookback: 26
-        requires_ohlc: true  # Requires OHLC for MACD calculation
+        requires_ohlc: false  # OR5-CODE T6: Uses adj_close only (EMA-based)
       - name: macd_histogram_pct
         description: MACD histogram (line - signal) as % of price
         lookback: 35
-        requires_ohlc: true  # Requires OHLC for MACD calculation
+        requires_ohlc: false  # OR5-CODE T6: Uses adj_close only (EMA-based)
   
   volatility:
     description: Volatility indicators
@@ -72,7 +72,7 @@ categories:
       - name: pv_correlation_5d
         description: Price-volume correlation (5-day rolling)
         lookback: 5
-        requires_ohlc: true  # Requires reliable OHLC for correlation
+        requires_ohlc: false  # OR5-CODE T6: Uses adj_close + volume only
   
   mean_reversion:
     description: Mean reversion indicators
@@ -132,15 +132,10 @@ importance:
 # Added: requires_ohlc field to all features
 # Purpose: Meta-driven exemption list for backup sources
 # 
-# Features requiring OHLC (exempted for backup sources):
-# - rsi_14, macd_line_pct, macd_histogram_pct
-# - pv_correlation_5d, adx_14
-#
-# R22 (v2):
-# Replaced: macd_signal_pct → macd_histogram_pct
-#
-# R19 (v1 → v2):
-# Removed: macd_line, macd_signal, atr_20, obv, regime_vol_score,
-#          regime_trend_score, price_vs_ema20_zscore
-# Added: macd_line_pct, macd_signal_pct
-# =============================================================================
+# OR5-CODE T6: Features requiring OHLC (exempted for backup sources):
+# - adx_14, atr_20, kline features (genuinely need OHLC)
+# 
+# Features NOT requiring OHLC (use adj_close/volume only):
+# - rsi_14, macd_line_pct, macd_histogram_pct (EMA-based, adj_close only)
+# - pv_correlation_5d (adj_close + volume)
+# - returns_*, rv_*, sma_*, vol_ratio (adj_close or volume only)

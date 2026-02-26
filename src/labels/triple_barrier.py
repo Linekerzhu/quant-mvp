@@ -66,6 +66,17 @@ class TripleBarrierLabeler:
         
         Enforces non-overlapping constraint: only one active event per symbol.
         
+        Meta-Labeling Architecture (Phase C):
+        ----------------------------------------
+        If 'side' column exists (from Base Model):
+        - Triple Barrier ONLY triggers when Base Model produces signal (side != 0)
+        - label=1: Base Model signal was profitable (hit profit barrier first)
+        - label=0: Base Model signal was unprofitable (hit loss barrier or time)
+        - Meta Model learns "which Base Model signals are more reliable"
+        
+        Backward Compatibility:
+        - If no 'side' column, generates labels for ALL valid events (original behavior)
+        
         Args:
             df: DataFrame with OHLCV + ATR data
             trigger_col: Column indicating event trigger date
@@ -175,6 +186,22 @@ class TripleBarrierLabeler:
         # FIX B1: Defense-in-depth - check features_valid if available
         if 'features_valid' in symbol_df.columns and not symbol_df.loc[idx, 'features_valid']:
             return False, 'features_invalid'
+        
+        # =======================================================================
+        # Meta-Labeling Support (Phase C)
+        # =======================================================================
+        # If 'side' column exists (from Base Model), only generate events
+        # when Base Model produces a signal (side != 0).
+        # 
+        # Meta-Labeling Architecture:
+        # - Triple Barrier only triggers when Base Model signals (side != 0)
+        # - label=1: Base Model signal was profitable
+        # - label=0: Base Model signal was unprofitable
+        # - Meta Model learns "which Base Model signals are more reliable"
+        # =======================================================================
+        if 'side' in symbol_df.columns:
+            if symbol_df.loc[idx, 'side'] == 0:
+                return False, 'no_signal'  # Base Model has no signal in cold start
         
         # Must not be suspended
         # P1 (R26-A2): Use != True instead of == False for NaN-safety

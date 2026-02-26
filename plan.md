@@ -1,4 +1,4 @@
-# 美股日频量化MVP执行计划 v4.1 (Futu版)
+# 美股日频量化MVP执行计划 v4.2 (OR5审计裁决版)
 
 ## 修订历史
 
@@ -22,6 +22,13 @@
   3. **成本模型参数调整**（Futu 佣金结构 vs Alpaca 零佣金）。
   4. **Docker 部署适配 FutuOpenD 网关**。
   5. **模拟盘策略调整**（Futu 模拟交易的差异处理）。
+- **v4.2 (OR5 审计裁决)**：Phase C 架构重构。主要变更：
+  1. **Phase C 从"单模型直接预测"强制升级为 Meta-Labeling 架构**。
+  2. **新增 FracDiff 分数阶差分特征** 作为 Phase C 必选项。
+  3. **CPCV 参数确认 n_splits=6**（原文 N=10 已过时，config 早已修正）。
+  4. **LightGBM 反 Kaggle 硬化参数锁死**（max_depth=3, num_leaves=7, min_data_in_leaf=200）。
+  5. **数据技术债惩罚性拨备** 写入验收标准（CAGR -3%, MDD +10%）。
+  6. **详细实施指南** 见 `docs/PHASE_C_IMPL_GUIDE.md`。
 
 ---
 
@@ -52,7 +59,7 @@
 - 事件生成协议：Triple Barrier 事件定义 + 并发规则。
 - Triple Barrier 标签 + 样本唯一性加权 + 类不平衡处理。
 - LightGBM 单模型（MVP 主线）+ CatBoost 双模型集成（条件扩展 Phase C+）。
-- Meta-Labeling 信号过滤（条件启用，Phase D 前置条件验证后决定）。
+- Meta-Labeling 信号过滤（**OR5 审计裁决：Phase C 强制实施**，不再条件化）。
 - CPCV + Walk-Forward 双重验证。
 - Deflated Sharpe Ratio + PBO 过拟合检测。
 - 双重过拟合哨兵：时间打乱哨兵 + Dummy Feature 噪声哨兵（v4 扩展）。
@@ -211,6 +218,9 @@ quant-mvp/
 │   ├── training.yaml                      # 训练超参 + CPCV 参数 + 成本模型 schema
 │   ├── risk_limits.yaml                   # 风控阈值
 │   └── position_sizing.yaml              # Fractional Kelly 参数
+├── docs/
+│   ├── OR5_CONTRACT.md                    # OR5 审计契约
+│   └── PHASE_C_IMPL_GUIDE.md              # Phase C 工程实施指南（v4.2 新增）
 ├── src/
 │   ├── __init__.py
 │   ├── data/
@@ -223,6 +233,7 @@ quant-mvp/
 │   ├── features/
 │   │   ├── __init__.py
 │   │   ├── build_features.py             # 多时间尺度特征（含 dummy noise feature）
+│   │   ├── fracdiff.py                   # Phase C Step 3: 分数阶差分特征（v4.2 新增）
 │   │   ├── feature_importance.py         # IC 追踪 + 漂移检测
 │   │   ├── feature_stability.py          # 特征稳定性门控
 │   │   └── regime_detector.py            # 市场状态（波动率 + ADX）→ 作为特征
@@ -232,17 +243,18 @@ quant-mvp/
 │   │   └── sample_weights.py             # 样本唯一性加权 + 类不平衡处理
 │   ├── signals/
 │   │   ├── __init__.py
-│   │   └── meta_label.py                 # Meta-Labeling 信号过滤（条件启用）
+│   │   └── base_models.py                # Phase C Step 1: Base Model 炮灰信号源（v4.2 新增）
 │   ├── models/
 │   │   ├── __init__.py
-│   │   ├── train_lightgbm.py             # MVP 主模型
+│   │   ├── purged_kfold.py               # Phase C Step 2: 手写 CPCV 隔离器（v4.2 新增）
+│   │   ├── meta_trainer.py               # Phase C Step 4: Meta-Labeling 训练管道（v4.2 新增）
 │   │   ├── train_catboost.py             # Phase C+ 条件扩展
 │   │   ├── ensemble.py                   # IC 加权集成（Phase C+）
 │   │   └── model_gate.py                 # 模型换代门控
 │   ├── backtest/
 │   │   ├── __init__.py
 │   │   ├── walk_forward.py
-│   │   ├── cpcv.py                       # CPCV 验证（含 purging + embargo）
+│   │   ├── cpcv.py                       # CPCV 验证流程（调用 models/purged_kfold.py 分割器）
 │   │   ├── overfit_detection.py          # Deflated Sharpe + PBO
 │   │   ├── cost_model.py                 # 手续费 + 滑点建模 + 校准闭环
 │   │   └── benchmark.py                  # SPY buy-and-hold 基准
@@ -274,6 +286,10 @@ quant-mvp/
 │   ├── test_features.py
 │   ├── test_labels.py
 │   ├── test_sample_weights.py
+│   ├── test_base_models.py               # Phase C Step 1 测试（v4.2 新增）
+│   ├── test_cpcv.py                      # Phase C Step 2 测试（v4.2 新增）
+│   ├── test_fracdiff.py                  # Phase C Step 3 测试（v4.2 新增）
+│   ├── test_meta_trainer.py              # Phase C Step 4 测试（v4.2 新增）
 │   ├── test_models.py
 │   ├── test_model_gate.py
 │   ├── test_backtest.py
@@ -318,16 +334,18 @@ flowchart TB
 
     subgraph featureLayer [特征与标签层]
         universe --> features[MultiScaleFeatures + DummyNoise]
-        features --> regime[RegimeDetector_AsFeature]
-        features --> labels[TripleBarrier_EventProtocol]
+        features --> fracdiff[FracDiff_特征重构]
+        fracdiff --> regime[RegimeDetector_AsFeature]
+        features --> baseModel[BaseModel_炮灰信号源]
+        baseModel --> labels[TripleBarrier_EventProtocol]
         labels --> sampleW[SampleWeights_Uniqueness]
     end
 
-    subgraph modelLayer [建模与验证层]
-        sampleW --> trainLGB[LightGBM_MVP]
-        trainLGB --> dummyCheck[DummyFeature_ImportanceCheck]
+    subgraph modelLayer [建模与验证层 (Meta-Labeling)]
+        sampleW --> metaLabel[MetaLabeling_LGB预测信号质量]
+        metaLabel --> dummyCheck[DummyFeature_ImportanceCheck]
         dummyCheck --> modelGate[FeatureStability+TurnoverGate]
-        modelGate --> cpcv[CPCV_Validation]
+        modelGate --> cpcv[CPCV_手写PurgedKFold]
         cpcv --> dsr[DeflatedSharpe_PBO]
         dsr -->|PBO小于0.3| passGate[PassGate]
         dsr -->|PBO大于等于0.5| rejectGate[Reject_RollBack]
@@ -336,17 +354,13 @@ flowchart TB
 
     subgraph modelLayerPlus [Phase C+ 条件扩展]
         sampleW -.-> trainCB[CatBoostTrain]
-        trainLGB -.-> ensemble[ICWeightedEnsemble]
+        metaLabel -.-> ensemble[ICWeightedEnsemble]
         trainCB -.-> ensemble
         ensemble -.-> dummyCheck
     end
 
     subgraph signalLayer [信号与风控层]
-        benchmark --> metaGate{MetaLabel启用?}
-        metaGate -->|样本≥5000| metaLabel[MetaLabelGate]
-        metaGate -->|样本不足| directSignal[DirectSignal]
-        metaLabel --> riskEngine[RiskEngine]
-        directSignal --> riskEngine
+        benchmark --> riskEngine[RiskEngine]
         riskEngine --> pdtGuard[PDTGuard]
         pdtGuard --> posSizing[IndependentKelly_Normalized]
     end
@@ -362,7 +376,7 @@ flowchart TB
         driftCheck -->|漂移严重| autoDegrade[AutoDegradeToPaper]
         driftCheck -->|正常| retrain[MonthlyRetrain]
         autoDegrade --> paperTrade
-        retrain --> trainLGB
+        retrain --> metaLabel
     end
 ```
 
@@ -506,35 +520,74 @@ embargo_window = max(feature_lookback, execution_delay, corporate_action_latency
 
 ---
 
-### Phase C：建模与严格验证（单模型 MVP）
+### Phase C：建模与严格验证（Meta-Labeling MVP）
 
-#### OR5 架构契约（S0 级前置条件）
+> **⚠️ OR5 审计裁决 (2026-02-25)**：本节已根据外部量化审计官终审批示全面重构。
+> 原"单模型直接预测"架构被否决，强制升级为 Meta-Labeling 架构。
+> 详见 `docs/OR5_CONTRACT.md`（审计契约）和 `docs/PHASE_C_IMPL_GUIDE.md`（逐行实施指南）。
 
-> **审计基线**: commit `7fddb78` | **审计日期**: 2026-02-25
->
-> 以下四项契约为 Phase C 的**硬性门槛条件**，违反即一票否决。
-> 详细契约见 `docs/OR5_CONTRACT.md`。
+**架构变更说明**：
 
-| 契约 | 内容 | 状态 |
-|------|------|------|
-| **契约 1: LightGBM 参数锁死** | `max_depth=3, num_leaves=7, min_data_in_leaf=200, feature_fraction=0.5` | ✅ 已落实 |
-| **契约 2: Meta-Labeling 架构** | Primary Model → Meta-Features → Secondary Model，LGB 不直接预测方向 | ⏳ Phase C 实施 |
-| **契约 3: FracDiff 特征基座** | d=0.4 分数阶差分，解决价格非平稳性，ADF test p<0.05 | ⏳ Phase C 实施 |
-| **契约 4: CPCV 手写切分器** | Purge + Embargo 逻辑手写，禁止 sklearn KFold | ⏳ Phase C 实施 |
-| **拨备: 回测扣减** | CAGR -3%, MDD +10% (Maximum Pessimism Principle) | ⏳ Phase C 实施 |
+- ~~训练 LightGBM 单模型直接预测涨跌方向~~（审计否决：信噪比太低，极易拟合噪音）
+- ✅ **Meta-Labeling 架构**：Base Model 产生方向信号 → LightGBM 仅预测"该信号是否盈利" → 概率 p 用于 Kelly 仓位管理
 
-**任务**：
+**施工顺序（严禁颠倒，4 步 SOP）**：
 
-- 训练 LightGBM 单模型（传入 sample_weight，超参从 `config/training.yaml` 读取）。
-- **执行 Dummy Feature 哨兵检查**：训练后检查 `dummy_noise` 的 Gain Importance 和 SHAP 排名。若进入前 25% 或相对贡献 > 1.0，判定过拟合，回退 Phase B 检查特征/标签。
-- 实现 CPCV 验证，参数：N=10 splits, K=2 test splits，purge_window 和 embargo_window 按 §6.5 统一公式计算。
-- **CPCV 边界测试**：在 fold 边界处构造最小样本，验证 purge/embargo 确实将 overlap 清除干净。
-- 实现 Walk-Forward 验证（滚动窗口，训练窗 = 2 年，测试窗 = 3 个月）作为 CPCV 补充对比。
-- 实现 Deflated Sharpe Ratio 计算。
-- 实现 PBO（Probability of Backtest Overfitting）计算。
-- 实现成本模型（参数口径见下方 schema）。成本模型参数支持后续校准更新。
-- 实现 SPY buy-and-hold 基准对比：策略必须在 Sharpe 和 MDD 上同时优于基准。报告同时给出 beta 调整后对比，避免在低波阶段误杀低相关策略。
-- 编写测试：`test_models.py`、`test_backtest.py`、`test_cpcv_boundary.py`。
+**Step 1 — Base Model（炮灰信号源）**
+
+- 实现 2+ 个极简规则因子（如 SMA 20/60 双均线交叉、20 日动量突破）。
+- 每个因子为每个 (symbol, date) 产生方向信号 `side ∈ {+1, -1, 0}`。
+- **防泄漏红线**：信号必须使用 `.shift(1)` 后的数据，T 日信号只能用 T-1 及之前的收盘价。
+- Triple Barrier 只在 `side ≠ 0` 时触发打标（`_is_valid_event` 增加 side 检查）。
+- 打标后标签含义转换为 Meta-Label：1 = 该信号最终盈利, 0 = 亏损。
+- 新增文件：`src/signals/base_models.py`、`tests/test_base_models.py`。
+
+**Step 2 — 手写 CPCV 隔离器（PurgedKFold）**
+
+- 手写 `CombinatorialPurgedKFold`，**禁止使用第三方库**。
+- 参数：n_splits=6, n_test_splits=2（C(6,2)=15 条 path），purge_window=10d, embargo_window=40d。
+- **Purge**：遍历 Train 每个样本，若其 `[entry_date, label_exit_date]` 与 Val 集特征回溯期有任何一天交集，从 Train 中暴力 Drop。必须基于 `label_exit_date`（精确退出日期），不是 `max_holding_days` 近似。
+- **Embargo**：Val 结束后 40 天内的 Train 样本强制 Drop。
+- 每条 path 有效训练天数必须 ≥ 200 天，否则标记 invalid。
+- 新增文件：`src/models/purged_kfold.py`、`tests/test_cpcv.py`。
+
+**Step 3 — FracDiff 特征重构**
+
+- 实现 Fixed-Width Window 分数阶差分，替代粗暴的对数收益率。
+- 在仅限 Train 集上通过 ADF 检验（p < 0.05）寻找保留最大记忆的最小 d 值。
+- d 值在 CPCV 每个 fold 内独立拟合（防止信息泄漏）。
+- 生成 `fracdiff_close` 特征列。美股日频 d 通常在 0.35 ~ 0.65。
+- 新增文件：`src/features/fracdiff.py`、`tests/test_fracdiff.py`。
+
+**Step 4 — Meta-MVP 闭环**
+
+- 串联完整管道：Base Model → Triple Barrier → FracDiff → Uniqueness 权重 → CPCV → LightGBM → 概率输出。
+- LightGBM 参数从 `config/training.yaml` 读取（已锁死反 Kaggle 硬化参数，见下方红线）。
+- 传入 `sample_weight`（Phase B 已计算的 AFML uniqueness 权重）。
+- **执行 Dummy Feature 哨兵检查**：`dummy_noise` 进入前 25% 或相对贡献 > 1.0 即判定过拟合。
+- 实现 Deflated Sharpe Ratio、PBO 计算。
+- 实现 SPY buy-and-hold 基准对比。
+- 实现成本模型（参数口径见下方 schema）。
+- 新增文件：`src/models/meta_trainer.py`、`tests/test_meta_trainer.py`。
+
+**🔴 OR5 审计红线（违反即一票否决）**：
+
+1. **LightGBM 参数锁死**（`config/training.yaml` 已实施）：
+   - `max_depth: 3`（严禁超过 3）
+   - `num_leaves: 7`（≤ 2^max_depth - 1）
+   - `min_data_in_leaf: 200`（强制统计显著性）
+   - `learning_rate: 0.01`, `lambda_l1: 1.0`, `feature_fraction: 0.5`
+   - 搜索空间硬边界：max_depth ∈ {2,3}, num_leaves ∈ {3,5,7}, min_data_in_leaf ∈ {100,200,300}
+
+2. **数据技术债惩罚性拨备**（回测报告硬编码）：
+   - 策略 CAGR 自动扣减 3.0%（生存者偏差 2% + 复权前视 1%）
+   - MDD 自动增加 10.0%
+   - 不带此扣减展示结果视为学术造假
+
+3. **Triple Barrier 最悲观执行原则**（`src/labels/triple_barrier.py` 已实施）：
+   - 跳空穿越：以实际开盘价结算（loss_gap / profit_gap）
+   - 同日双穿：强制按止损处理（loss_collision）
+   - 全程止损检查优先于止盈
 
 **成本模型参数口径（Cost Model Schema）**：
 
@@ -659,10 +712,7 @@ cost_model:
 
 **任务**：
 
-- Meta-Labeling 条件启用：
-  - 前置条件：Phase B 产出的有效样本量 ≥ 5000。
-  - 若满足：实现 Meta-Labeling，第一层模型判断方向，第二层模型判断"是否执行"。
-  - 若不满足：跳过 Meta-Labeling，直接使用模型输出概率作为信号置信度。在报告中记录跳过原因。
+- ~~Meta-Labeling 条件启用~~（**OR5 审计裁决**：已前移至 Phase C 作为强制架构，不再条件化。详见 Phase C Step 1 + Step 4。）
 - 实现 Fractional Kelly 多维仓位（MVP 阶段采用独立 Kelly + 总量归一化）：
   - 不对多资产协方差矩阵求逆（规避 S&P 500 高相关资产下的病态问题）。
   - 每个标的独立计算 Kelly 比例：`f_i = p_i / a_i - (1-p_i) / b_i`（p=胜率, a=平均盈利, b=平均亏损）。
@@ -683,7 +733,7 @@ cost_model:
   ```
 
 - 实现多层风控闸门：
-  - L1 信号层：置信度阈值（若启用 Meta-Label 则为其输出；否则为模型概率阈值）。
+  - L1 信号层：Meta-Labeling 概率输出 p（Phase C 已实施）。
   - L2 仓位层：单票 <= 10%、单行业 <= 30%。
   - L3 组合层：日亏损 <= 1%、最大回撤 <= 10%（降仓）/ 12%（Kill-Switch）、连续 3 日亏损自动降仓 50%。
   - L4 系统层：Kill-Switch（全平仓）+ 自动降级（实盘 -> 模拟盘）。
@@ -692,7 +742,7 @@ cost_model:
 - 所有风控参数从 `config/risk_limits.yaml` 读取，禁止硬编码。
 - 编写测试：`test_risk.py`、`test_pdt_guard.py`、`test_model_gate.py`。
 
-**产出**：风控参数配置、过滤前后收益对比报告、Meta-Labeling 启用/跳过决策记录。
+**产出**：风控参数配置、过滤前后收益对比报告。
 
 **验收标准**：
 
@@ -711,49 +761,13 @@ cost_model:
 - **接入 Futu OpenAPI**（通过 FutuOpenD 网关连接）。
 - 模拟盘使用 `TrdEnv.SIMULATE`，实盘使用 `TrdEnv.REAL`（需 `unlock_trade`）。
 - 叠加显式滑点模型（Futu 模拟盘同样不反映真实滑点，必须叠加）。
-- 下单策略：美东收盘后运行流水线计算信号，次日开盘前以限价单提交：
-  ```python
-  trd_ctx.place_order(
-      price=target_price,
-      qty=shares,
-      code="US.AAPL",                    # Futu 美股代码格式：US.{TICKER}
-      trd_side=TrdSide.BUY,              # 或 TrdSide.SELL
-      order_type=OrderType.NORMAL,        # 限价单
-      trd_env=TrdEnv.SIMULATE,            # Phase E 模拟 / Phase F 改 REAL
-      time_in_force=TimeInForce.DAY,      # 当日有效
-      fill_outside_rth=True,              # 允许盘前盘后成交
-      remark="intent_id:{intent_id}"      # 幂等键写入 remark 字段（最长 64 字节）
-  )
-  ```
+- 下单策略：美东收盘后运行流水线计算信号，次日开盘前以限价单提交。
 - FutuOpenD 网关必须保持运行，加入进程监控和自动重启。
 - 所有操作写入 append-only 事件日志（信号、目标仓位、订单、成交、滑点偏差、拒单原因）。
 - **mid-price 获取**：通过 Futu OpenAPI 的 `get_order_book` 接口获取实时摆盘数据，取 Bid[0] 和 Ask[0] 的中点。需先 `subscribe` 该标的的 ORDER_BOOK 类型。
-- 实现成本模型周度校准闭环：
-  - 每周从事件日志中提取：订单到成交价格偏差、限价成交率、成交价 vs mid-price 分布。
-  - mid-price 定义：下单提交时刻的 `(bid + ask) / 2`，从 Futu API 获取并记录在事件日志中。
-  - 按 `premarket` / `regular` 分组统计，分别更新成本模型对应参数。
-  - 自动回归更新 `config/training.yaml` 中 `cost_model` 段的可校准参数。
-  - 每桶样本数 < `min_samples_for_update`（默认 20）时不更新该桶，沿用初始值。
-  - 单次校准参数变化 > `max_param_change_pct`（默认 100%）时告警但不自动更新，需人工确认。
-  - 生成校准报告（`reports/cost_calibration/`），记录参数变化趋势。
-  - 若实际滑点 > 回测假设的 `alert_threshold_mult` 倍，触发告警。
-- 实现研究-交易信号一致性验证：
-  - 每日对比 paper 系统的信号输出与回测引擎在同一天同一标的上的信号输出。
-  - 允许差在执行价格，不允许差在信号方向或"是否交易"。
-  - **不一致事件写入日志时附带分类字段**：
-    - `config_mismatch`：参数/版本不一致
-    - `data_snapshot_mismatch`：使用了不同的数据快照
-    - `feature_pipeline_mismatch`：特征版本或计算路径不同
-    - `timing_mismatch`：时区/交易日对齐问题
-    - `unknown`：需进一步排查
-  - 若不一致，写入事件日志（level=ERROR）并触发告警。
-- 实现每日流水线幂等性：
-  - `daily_job.py` 必须支持中断后安全重启：
-    - 每个步骤（数据采集、校验、特征、信号、执行）完成后写入检查点（checkpoint）到事件日志。
-    - 重启时读取检查点，跳过已完成步骤，从中断点继续。
-    - 中间产物使用当日日期作为幂等键：同一日重复运行同一步骤，覆盖而非追加（数据/特征/信号）。
-    - 执行层特殊处理：若订单已提交（检查点记录了 order_id），重启时先查询订单状态，不重复提交。
-    - **部分成交处理**：每个 `(trade_date, symbol)` 对应唯一的 `intent_id`（幂等键）。订单状态为 `partially_filled` 时：允许 **至多一次** "撤单-重挂"操作，新订单继承原 `intent_id`，事件日志记录原 `order_id` → 新 `order_id` 的映射及原因。
+- 实现成本模型周度校准闭环。
+- 实现研究-交易信号一致性验证。
+- 实现每日流水线幂等性。
 - 部署告警通知（Telegram Bot 或邮件）。
 - 每周生成模拟盘 vs 回测偏差报告。
 - 编写测试：`test_idempotency.py`、`test_cost_calibration.py`（含校准稳定性：异常周不拧爆参数）。
@@ -856,11 +870,12 @@ cost_model:
 - [ ] 幸存者偏差已处理或量化（方案 B 区间估算披露）。
 - [ ] 事件生成协议正确实现（同一标的事件不重叠）。
 - [ ] 样本权重正确反映标签并发度。
-- [ ] LightGBM 单模型通过 CPCV 验证。
+- [ ] **Phase C Meta-Labeling 架构完整实施**（Base Model → Triple Barrier → FracDiff → CPCV → LightGBM）。
 - [ ] CPCV 边界测试通过（purge/embargo 无 overlap 残留）。
 - [ ] （可选）双模型集成优于单模型且通过换代门控。
 - [ ] CPCV PBO < 0.3，Deflated Sharpe > 0。
 - [ ] 策略优于 SPY buy-and-hold（风险调整后，含 beta 调整对比）。
+- [ ] **数据技术债拨备已硬编码**（CAGR -3%, MDD +10%）。
 - [ ] PDT 守卫阻止所有日内往返。
 - [ ] Fractional Kelly 仓位在压力测试下不越限，总杠杆不超过上限。
 - [ ] Kill-Switch + 自动降级正常触发。
@@ -916,7 +931,7 @@ cost_model:
 | P1 | Kelly 协方差病态导致爆炸性仓位 | 风控失效 | 独立 Kelly + 总量归一化 |
 | P1 | 每日流水线中断导致脏数据/重复订单 | 实盘异常 | 幂等性设计 + 检查点机制 |
 | **P1** | **FutuOpenD 网关进程中断** | **下单/行情全部中断** | **进程监控 + 自动重启 + 断线重连 + 事件日志告警** |
-| P2 | 双模型/Meta-Label 导致样本效率下降 | 更"先进"但更不稳定 | 单模型先行 + 条件化启用 |
+| P2 | Meta-Label 导致样本效率下降 | Base Model 信号稀疏时训练样本不足 | min_data_in_leaf=200 强制统计显著 + 简单 Base Model 保证信号密度 |
 | P2 | Regime 不稳引入状态切换噪声 | 风控频繁误触发 | MVP 阶段仅做软特征 |
 | P2 | 成分变更日信号/持仓不一致 | 实盘异常交易 | 冷启动规则 + 持仓迁移规则 + 信号冻结 |
 | **P2** | **Futu 模拟盘与实盘行为差异** | **模拟盘成交机制可能不完全模拟真实市场** | **显式滑点模型叠加 + Phase E/F 成本校准对比** |
@@ -1031,4 +1046,4 @@ FUTU_TRADE_PASSWORD_MD5=your_md5_password  # 实盘解锁用
 
 ---
 
-*plan.md v4.1 - 执行层已迁移至 Futu OpenAPI*
+*plan.md v4.2 - OR5 审计裁决：Phase C 强制 Meta-Labeling 架构*

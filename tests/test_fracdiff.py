@@ -31,18 +31,19 @@ class TestFracdiffWeights:
         assert np.all(weights[1:] == 0)
     
     def test_weights_d_1(self):
-        """Test weights for d=1 (should be [1, 1, 0, 0, ...])"""
+        """Test weights for d=1 (should be [1, -1, 0, 0, ...])"""
         weights = fracdiff_weights(1.0, 10)
+        # For d=1: w[0]=1, w[1]=(0-1)/1=-1, then all zeros
         assert weights[0] == 1.0
-        assert weights[1] == 1.0
+        assert weights[1] == -1.0
         assert np.all(weights[2:] == 0)
     
     def test_weights_d_05(self):
         """Test weights for d=0.5"""
         weights = fracdiff_weights(0.5, 10)
-        # First few weights: [1, 0.5, -0.125, 0.0625, ...]
+        # For d=0.5: w[0]=1, w[1]=(0-0.5)/1=-0.5, w[2]=(1-0.5)/2*(-0.5)=-0.125
         assert weights[0] == 1.0
-        assert weights[1] == 0.5
+        assert abs(weights[1] - (-0.5)) < 0.001
         assert abs(weights[2] - (-0.125)) < 0.001
     
     def test_weights_positive_d(self):

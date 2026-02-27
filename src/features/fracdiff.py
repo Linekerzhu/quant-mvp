@@ -20,10 +20,10 @@ def fracdiff_weights(d: float, window: int) -> np.ndarray:
     
     Formula (AFML Ch5):
         w[0] = 1
-        w[k] = w[k-1] * (d - k + 1) / k
+        w[k] = w[k-1] * (k - 1 - d) / k
     
     Args:
-        d: Differencing order (0 < d < 1)
+        d: Differencing order (0 <= d <= 1)
         window: Number of weights to compute
     
     Returns:
@@ -33,7 +33,7 @@ def fracdiff_weights(d: float, window: int) -> np.ndarray:
     weights[0] = 1.0
     
     for k in range(1, window):
-        weights[k] = weights[k-1] * (d - k + 1) / k
+        weights[k] = weights[k-1] * (k - 1 - d) / k
     
     return weights
 

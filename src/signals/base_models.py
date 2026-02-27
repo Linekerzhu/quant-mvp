@@ -114,14 +114,38 @@ class BaseModelMomentum:
         
         # CRITICAL: Use shift(1) to prevent look-ahead bias
         # Calculate log returns using T-1 data
-        returns = np.log(result['adj_close'] / result['adj_close'].shift(1))
-        returns_nd = returns.shift(1).rolling(self.window).sum()
+        
+        # P0 Fix: Handle NaN/Inf in price data
+        # Get T-1 price and verify it's valid
+        price_prev = result['adj_close'].shift(1)
+        price_curr = result['adj_close']
+        
+        # Valid if: both prices > 0 and not NaN
+        valid_mask = (
+            (price_prev > 0) & 
+            (price_curr > 0) & 
+            price_prev.notna() & 
+            price_curr.notna()
+        )
+        
+        # Calculate ratio safely - keep as Series to use .shift()
+        result['price_ratio'] = price_curr / price_prev
+        result.loc[~valid_mask, 'price_ratio'] = np.nan
+        
+        # Log return
+        result['returns'] = np.log(result['price_ratio'])
+        
+        # Accumulate returns
+        returns_nd = result['returns'].shift(1).rolling(self.window).sum()
         
         # Generate signals: +1 for positive momentum, -1 for negative
         result['side'] = np.where(returns_nd > 0, 1, -1)
         
         # Cold start: first window days have insufficient data
         result.loc[:self.window - 1, 'side'] = 0
+        
+        # Also set side=0 where returns are NaN (no valid signal)
+        result.loc[returns_nd.isna(), 'side'] = 0
         
         # Ensure integer type
         result['side'] = result['side'].astype(int)

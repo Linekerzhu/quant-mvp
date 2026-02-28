@@ -183,8 +183,8 @@ class CombinatorialPurgedKFold:
             for seg_idx in test_seg_indices:
                 seg_start = segments[seg_idx][0]
                 seg_end = segments[seg_idx][1] - 1
-                seg_start_date = df.loc[seg_start, date_col]
-                seg_end_date = df.loc[seg_end, date_col]
+                seg_start_date = df.at[seg_start, date_col]
+                seg_end_date = df.at[seg_end, date_col]
                 # 该段的purge范围
                 test_ranges.append((
                     seg_start_date - BDay(self.purge_window),
@@ -267,8 +267,8 @@ class CombinatorialPurgedKFold:
             for seg_idx in test_seg_indices:
                 seg_start = segments[seg_idx][0]
                 seg_end = segments[seg_idx][1] - 1
-                seg_start_date = df.loc[seg_start, date_col]
-                seg_end_date = df.loc[seg_end, date_col]
+                seg_start_date = df.at[seg_start, date_col]
+                seg_end_date = df.at[seg_end, date_col]
                 test_ranges.append((
                     seg_start_date - BDay(self.purge_window),
                     seg_end_date + BDay(self.purge_window)

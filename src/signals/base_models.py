@@ -13,8 +13,11 @@ import numpy as np
 import pandas as pd
 from typing import Optional
 
+from src.signals.base import BaseSignalGenerator, SignalModelRegistry
 
-class BaseModelSMA:
+
+@SignalModelRegistry.register('sma')
+class BaseModelSMA(BaseSignalGenerator):
     """
     Dual Moving Average Crossover Signal Generator
     
@@ -54,6 +57,13 @@ class BaseModelSMA:
             - -1: bearish (fast < slow)
             -  0: cold start (insufficient data)
         """
+        # P0 Fix: Input validation
+        if df is None or df.empty:
+            raise ValueError("Input DataFrame is empty or None")
+        
+        if 'adj_close' not in df.columns:
+            raise ValueError("Missing required column: adj_close")
+        
         result = df.copy()
         
         # CRITICAL: Use shift(1) to prevent look-ahead bias
@@ -76,7 +86,8 @@ class BaseModelSMA:
         return f"BaseModelSMA(fast={self.fast_window}, slow={self.slow_window})"
 
 
-class BaseModelMomentum:
+@SignalModelRegistry.register('momentum')
+class BaseModelMomentum(BaseSignalGenerator):
     """
     Momentum Breakout Signal Generator
     
@@ -97,6 +108,29 @@ class BaseModelMomentum:
         """
         self.window = window
     
+    def _validate_price_data(self, price_series: pd.Series) -> pd.Series:
+        """
+        检查价格数据有效性。
+        
+        Args:
+            price_series: Price series with index
+        
+        Returns:
+            Boolean Series: True if valid, False otherwise
+        """
+        price_prev = price_series.shift(1)
+        price_curr = price_series
+        
+        # Valid if: both prices > 0 and not NaN
+        valid_mask = (
+            (price_prev > 0) & 
+            (price_curr > 0) & 
+            price_prev.notna() & 
+            price_curr.notna()
+        )
+        
+        return valid_mask
+    
     def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
         """
         Generate momentum signals.
@@ -110,6 +144,13 @@ class BaseModelMomentum:
             - -1: negative momentum (returns < 0)
             -  0: cold start (insufficient data)
         """
+        # P0 Fix: Input validation
+        if df is None or df.empty:
+            raise ValueError("Input DataFrame is empty or None")
+        
+        if 'adj_close' not in df.columns:
+            raise ValueError("Missing required column: adj_close")
+        
         result = df.copy()
         
         # CRITICAL: Use shift(1) to prevent look-ahead bias
@@ -120,13 +161,8 @@ class BaseModelMomentum:
         price_prev = result['adj_close'].shift(1)
         price_curr = result['adj_close']
         
-        # Valid if: both prices > 0 and not NaN
-        valid_mask = (
-            (price_prev > 0) & 
-            (price_curr > 0) & 
-            price_prev.notna() & 
-            price_curr.notna()
-        )
+        # Use extracted validation method
+        valid_mask = self._validate_price_data(result['adj_close'])
         
         # Calculate ratio safely - keep as Series to use .shift()
         result['price_ratio'] = price_curr / price_prev

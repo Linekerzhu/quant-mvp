@@ -292,3 +292,49 @@ class TestBaseModelIntegration:
         assert 'side' in result.columns
         nonzero_count = (result['side'] != 0).sum()
         assert nonzero_count > 0, "Should have non-zero signals for Triple Barrier"
+
+
+class TestEdgeCases:
+    """Edge case tests for base models."""
+    
+    def test_sma_empty_dataframe(self):
+        """Test SMA with empty DataFrame."""
+        import pandas as pd
+        from src.signals.base_models import BaseModelSMA
+        
+        model = BaseModelSMA(fast_window=5, slow_window=10)
+        empty_df = pd.DataFrame(columns=['symbol', 'date', 'adj_close'])
+        
+        try:
+            model.generate_signals(empty_df)
+            assert False, "Should raise ValueError"
+        except ValueError as e:
+            assert "empty" in str(e).lower()
+    
+    def test_momentum_empty_dataframe(self):
+        """Test Momentum with empty DataFrame."""
+        import pandas as pd
+        from src.signals.base_models import BaseModelMomentum
+        
+        model = BaseModelMomentum(window=10)
+        empty_df = pd.DataFrame(columns=['symbol', 'date', 'adj_close'])
+        
+        try:
+            model.generate_signals(empty_df)
+            assert False, "Should raise ValueError"
+        except ValueError as e:
+            assert "empty" in str(e).lower()
+    
+    def test_sma_missing_column(self):
+        """Test SMA with missing adj_close column."""
+        import pandas as pd
+        from src.signals.base_models import BaseModelSMA
+        
+        model = BaseModelSMA(fast_window=5, slow_window=10)
+        df = pd.DataFrame({'symbol': ['A'], 'date': ['2026-01-01']})
+        
+        try:
+            model.generate_signals(df)
+            assert False, "Should raise ValueError"
+        except ValueError as e:
+            assert "adj_close" in str(e).lower()

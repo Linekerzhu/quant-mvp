@@ -13,12 +13,37 @@ Author: 李得勤
 Date: 2026-02-27
 """
 
+import logging
 import numpy as np
 import pandas as pd
 from typing import Iterator, Tuple, List
 from itertools import combinations
-import yaml
-from pathlib import Path
+
+from src.ops.event_logger import get_logger
+
+logger = get_logger()
+
+
+def _has_overlap(entry_date, exit_date, purge_start, purge_end):
+    """
+    检查样本持有期是否与 purge 窗口重叠
+    
+    Args:
+        entry_date: 样本进入日期
+        exit_date: 样本退出日期（Triple Barrier 实际退出日）
+        purge_start: purge 窗口开始
+        purge_end: purge 窗口结束
+    
+    Returns:
+        bool: 是否有重叠
+    """
+    if pd.isna(entry_date) or pd.isna(exit_date):
+        return False
+    
+    # 持有期与 purge 窗口有重叠的条件
+    # 等价于: NOT (完全在purge前 OR 完全在purge后)
+    # 即: exit_date >= purge_start AND entry_date <= purge_end
+    return exit_date >= purge_start and entry_date <= purge_end
 
 
 class CombinatorialPurgedKFold:
@@ -45,7 +70,7 @@ class CombinatorialPurgedKFold:
         purge_window: int = 10,
         embargo_window: int = 40,
         min_data_days: int = 200,
-        config_path: str = "config/training.yaml"
+        config_path: str = None  # Deprecated, kept for backward compatibility
     ):
         """
         Initialize CPCV splitter.
@@ -56,33 +81,37 @@ class CombinatorialPurgedKFold:
             purge_window: Days to purge after test set (overlap prevention)
             embargo_window: Additional embargo days after test set
             min_data_days: Minimum training samples required per path
-            config_path: Path to config file (optional override)
+            config_path: Deprecated, ignored. Use from_config() instead.
+        
+        Note:
+            所有参数通过构造函数注入，违反依赖倒置原则。
+            调用方负责从配置文件加载参数后传入。
         """
         self.n_splits = n_splits
         self.n_test_splits = n_test_splits
         self.purge_window = purge_window
         self.embargo_window = embargo_window
         self.min_data_days = min_data_days
-        
-        # Try to load from config if exists
-        if Path(config_path).exists():
-            self._load_from_config(config_path)
     
-    def _load_from_config(self, config_path: str):
-        """Load parameters from training.yaml"""
-        try:
-            with open(config_path, 'r') as f:
-                config = yaml.safe_load(f)
-            
-            cpcv = config.get('validation', {}).get('cpcv', {})
-            if cpcv:
-                self.n_splits = cpcv.get('n_splits', self.n_splits)
-                self.n_test_splits = cpcv.get('n_test_splits', self.n_test_splits)
-                self.purge_window = cpcv.get('purge_window', self.purge_window)
-                self.embargo_window = cpcv.get('embargo_window', self.embargo_window)
-                self.min_data_days = cpcv.get('min_data_days', self.min_data_days)
-        except Exception as e:
-            print(f"Warning: Could not load config: {e}")
+    @classmethod
+    def from_config(cls, config: dict) -> 'CombinatorialPurgedKFold':
+        """
+        从配置字典创建实例（保持向后兼容）。
+        
+        Args:
+            config: 包含 'validation.cpcv' 的配置字典
+        
+        Returns:
+            CombinatorialPurgedKFold 实例
+        """
+        cpcv = config.get('validation', {}).get('cpcv', {})
+        return cls(
+            n_splits=cpcv.get('n_splits', 6),
+            n_test_splits=cpcv.get('n_test_splits', 2),
+            purge_window=cpcv.get('purge_window', 10),
+            embargo_window=cpcv.get('embargo_window', 40),
+            min_data_days=cpcv.get('min_data_days', 200)
+        )
     
     def get_n_paths(self) -> int:
         """Return number of CPCV paths: C(n_splits, n_test_splits)"""
@@ -167,16 +196,13 @@ class CombinatorialPurgedKFold:
                 if row_date <= embargo_end and row_date > test_max_date:
                     continue
                 
-                # Check purge overlap
-                # If row's exit date overlaps with test period (considering purge window)
+                # Check purge overlap using both entry_date and exit_date
                 if exit_date_col in df.columns:
+                    entry_date = df.loc[idx, date_col]  # entry date
                     exit_date = df.loc[idx, exit_date_col]
-                    if pd.notna(exit_date):
-                        # Sample exits after test starts (considering purge)
-                        if exit_date >= purge_start:
-                            # But before test ends + purge window
-                            if exit_date <= purge_end:
-                                continue  # Overlaps, skip this sample
+                    
+                    if _has_overlap(entry_date, exit_date, purge_start, purge_end):
+                        continue  # 有重叠，跳过
                 
                 train_indices.append(idx)
             
@@ -233,12 +259,13 @@ class CombinatorialPurgedKFold:
                 if row_date <= embargo_end and row_date > test_max_date:
                     continue
                 
+                # Check purge overlap using both entry_date and exit_date
                 if exit_date_col in df.columns:
+                    entry_date = df.loc[idx, date_col]  # entry date
                     exit_date = df.loc[idx, exit_date_col]
-                    if pd.notna(exit_date):
-                        if exit_date >= purge_start:
-                            if exit_date <= purge_end:
-                                continue
+                    
+                    if _has_overlap(entry_date, exit_date, purge_start, purge_end):
+                        continue  # 有重叠，跳过
                 
                 train_indices.append(idx)
             
@@ -336,11 +363,14 @@ class PurgedKFold:
                 if row_date <= embargo_end and row_date > test_max_date:
                     continue
                 
-                # Purge check
+                # Purge check using both entry_date and exit_date
                 if exit_date_col in df.columns:
+                    entry_date = df.loc[idx, date_col]  # entry date
                     exit_date = df.loc[idx, exit_date_col]
-                    if pd.notna(exit_date):
-                        if exit_date >= test_min_date and exit_date <= purge_end:
+                    
+                    if pd.notna(exit_date) and pd.notna(entry_date):
+                        # Check if holding period overlaps with [test_min_date, purge_end]
+                        if _has_overlap(entry_date, exit_date, test_min_date, purge_end):
                             continue
                 
                 train_indices.append(idx)

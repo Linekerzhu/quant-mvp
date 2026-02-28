@@ -70,18 +70,18 @@ class EventLogger:
         with open(self.current_file, 'a') as f:
             f.write(json.dumps(event, default=str) + '\n')
     
-    # Convenience methods
-    def debug(self, event_type: str, payload: Dict[str, Any], symbol: Optional[str] = None):
-        self.log(event_type, payload, EventLevel.DEBUG, symbol)
+    # Convenience methods - OR4 Fix: payload is optional
+    def debug(self, event_type: str, payload: Dict[str, Any] = None, symbol: Optional[str] = None):
+        self.log(event_type, payload or {}, EventLevel.DEBUG, symbol)
     
-    def info(self, event_type: str, payload: Dict[str, Any], symbol: Optional[str] = None):
-        self.log(event_type, payload, EventLevel.INFO, symbol)
+    def info(self, event_type: str, payload: Dict[str, Any] = None, symbol: Optional[str] = None):
+        self.log(event_type, payload or {}, EventLevel.INFO, symbol)
     
-    def warn(self, event_type: str, payload: Dict[str, Any], symbol: Optional[str] = None):
-        self.log(event_type, payload, EventLevel.WARN, symbol)
+    def warn(self, event_type: str, payload: Dict[str, Any] = None, symbol: Optional[str] = None):
+        self.log(event_type, payload or {}, EventLevel.WARN, symbol)
     
-    def error(self, event_type: str, payload: Dict[str, Any], symbol: Optional[str] = None):
-        self.log(event_type, payload, EventLevel.ERROR, symbol)
+    def error(self, event_type: str, payload: Dict[str, Any] = None, symbol: Optional[str] = None):
+        self.log(event_type, payload or {}, EventLevel.ERROR, symbol)
 
 
 # Global logger instance

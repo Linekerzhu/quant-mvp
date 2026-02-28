@@ -100,7 +100,7 @@ validation:
     # P2 (R27-B1): Increased to 630 to ensure adequate training data
     # fold_size = 630/6 = 105d > gap (50d) ✓
     # All 15 CPCV paths now have >= 200d effective training
-    min_data_days: 630  # R27: 630/6=105 > 50, all paths adequate
+    min_data_days: 200  # OR4: 200 per path minimum (was 630, too strict for少量股票)
   
   # Walk-Forward validation
   walk_forward:

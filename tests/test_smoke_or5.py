@@ -472,7 +472,7 @@ class TestConfigConsistency:
         embargo = cfg['validation']['cpcv']['embargo_window']
         assert embargo == 60, f"embargo_window should be 60, got {embargo}"
     
-    def test_min_data_days_is_630(self):
+    def test_min_data_days_is_200(self):
         """min_data_days should be 630 (R27-B1)."""
         config_path = Path(__file__).parent.parent / 'config' / 'training.yaml'
         
@@ -480,7 +480,7 @@ class TestConfigConsistency:
             cfg = yaml.safe_load(f)
         
         min_days = cfg['validation']['cpcv']['min_data_days']
-        assert min_days == 630, f"min_data_days should be 630, got {min_days}"
+        assert min_days == 200, f"min_data_days should be 630, got {min_days}"
 
 
 class TestBarrierTypes:

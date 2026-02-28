@@ -18,6 +18,7 @@ import numpy as np
 import pandas as pd
 from typing import Iterator, Tuple, List
 from itertools import combinations
+from pandas.tseries.offsets import BDay  # H-02: 使用交易日而非日历日
 
 from src.ops.event_logger import get_logger
 
@@ -178,11 +179,12 @@ class CombinatorialPurgedKFold:
             
             # Calculate purge range using actual exit dates
             # Purge: Any sample whose [entry, exit] overlaps with test period
-            purge_start = test_min_date - pd.Timedelta(days=self.purge_window)
-            purge_end = test_max_date + pd.Timedelta(days=self.purge_window)
+            # H-02 Fix: 使用 BDay (交易日) 而非日历日
+            purge_start = test_min_date - BDay(self.purge_window)
+            purge_end = test_max_date + BDay(self.purge_window)
             
             # Calculate embargo range
-            embargo_end = test_max_date + pd.Timedelta(days=self.embargo_window)
+            embargo_end = test_max_date + BDay(self.embargo_window)
             
             # Build train set with purging and embargo
             train_indices = []

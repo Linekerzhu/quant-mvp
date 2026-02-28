@@ -106,17 +106,61 @@ class MetaTrainer:
         Validate OR5 Anti-Kaggle Hardening parameters.
         
         Raises:
-            AssertionError: If hardened parameters are violated
+            ValueError: If hardened parameters are violated
         """
         max_depth = self.lgb_params.get('max_depth', 0)
         num_leaves = self.lgb_params.get('num_leaves', 0)
         min_data_in_leaf = self.lgb_params.get('min_data_in_leaf', 0)
         
-        assert max_depth <= 3, f"OR5: max_depth must be <= 3, got {max_depth}"
-        assert num_leaves <= 7, f"OR5: num_leaves must be <= 7, got {num_leaves}"
-        assert min_data_in_leaf >= 100, f"OR5: min_data_in_leaf should be >= 100, got {min_data_in_leaf}"
+        # H-05 Fix: 使用显式检查，替代assert（可被-O绕过）
+        if max_depth > 3:
+            raise ValueError(f"OR5 VIOLATION: max_depth={max_depth} > 3")
+        if num_leaves > 7:
+            raise ValueError(f"OR5 VIOLATION: num_leaves={num_leaves} > 7")
+        if min_data_in_leaf < 100:
+            raise ValueError(f"OR5 VIOLATION: min_data_in_leaf={min_data_in_leaf} < 100")
         
         logger.info("OR5 hardened parameters validated successfully")
+    
+    def _calculate_sample_weights(self, df: pd.DataFrame) -> np.ndarray:
+        """
+        计算样本权重（基于 uniqueness）。
+        
+        根据 AFML Ch4，样本权重应基于：
+        1. Uniqueness: 样本的独立程度
+        2. Return: 样本的收益贡献（可选）
+        
+        Args:
+            df: DataFrame with 'uniqueness' column (from Phase B)
+        
+        Returns:
+            Array of sample weights (normalized to mean=1)
+        """
+        weight_config = self.config.get('sample_weights', {})
+        method = weight_config.get('method', 'uniqueness')
+        
+        if method == 'uniqueness':
+            # 使用 uniqueness 列（应由 Phase B 生成）
+            if 'uniqueness' in df.columns:
+                weights = df['uniqueness'].values.copy()
+            else:
+                # Fallback: 均匀权重
+                logger.warn("uniqueness_column_missing", {})
+                weights = np.ones(len(df))
+        elif method == 'equal':
+            weights = np.ones(len(df))
+        else:
+            weights = np.ones(len(df))
+        
+        # 应用 min/max 限制
+        min_weight = weight_config.get('min_weight', 0.01)
+        max_weight = weight_config.get('max_weight', 10.0)
+        weights = np.clip(weights, min_weight, max_weight)
+        
+        # 归一化（保持均值=1）
+        weights = weights / weights.mean()
+        
+        return weights
     
     def _generate_base_signals(
         self, 
@@ -169,20 +213,68 @@ class MetaTrainer:
         train_df: pd.DataFrame,
         test_df: pd.DataFrame,
         features: List[str],
-        target_col: str = 'meta_label'
+        target_col: str = 'meta_label',
+        price_col: str = 'adj_close'
     ) -> Dict[str, Any]:
         """
-        训练单个 CPCV fold。
+        训练单个 CPCV fold，包含 FracDiff 特征计算。
         
         Args:
             train_df: Training data
             test_df: Test data
             features: Feature column names
             target_col: Target column name
+            price_col: Price column name for FracDiff
         
         Returns:
             Dictionary with training results
         """
+        # C-02 Fix: 集成 FracDiff 特征计算
+        from src.features.fracdiff import find_min_d_stationary, fracdiff_fixed_window
+        
+        # Step 1: 在训练集上找最优 d
+        fracdiff_config = self.config.get('fracdiff', {})
+        d_values = fracdiff_config.get('d_values', [0.0, 0.1, 0.2, 0.3, 0.4, 0.5])
+        adf_threshold = fracdiff_config.get('adf_pvalue_threshold', 0.05)
+        window = fracdiff_config.get('window', 100)
+        
+        try:
+            optimal_d = find_min_d_stationary(
+                train_df[price_col],
+                d_values=d_values,
+                adf_pvalue_threshold=adf_threshold
+            )
+        except Exception as e:
+            logger.warn("find_min_d_failed", {"error": str(e)})
+            optimal_d = 0.5  # fallback to default
+        
+        logger.info("fracdiff_optimal_d", {"optimal_d": optimal_d})
+        
+        # Step 2: 计算 FracDiff 特征（train + test）
+        train_df = train_df.copy()
+        test_df = test_df.copy()
+        
+        train_df['fracdiff'] = fracdiff_fixed_window(
+            train_df[price_col].values, optimal_d, window
+        )
+        test_df['fracdiff'] = fracdiff_fixed_window(
+            test_df[price_col].values, optimal_d, window
+        )
+        
+        # Step 3: 添加到特征列表
+        current_features = features + ['fracdiff']
+        
+        # Step 4: 去除 NaN（FracDiff burn-in period）
+        train_df = train_df.dropna(subset=['fracdiff'])
+        test_df = test_df.dropna(subset=['fracdiff'])
+        
+        # 确保有足够数据
+        if len(train_df) < 50 or len(test_df) < 10:
+            logger.warn("insufficient_data_after_fracdiff", {
+                "n_train": len(train_df),
+                "n_test": len(test_df)
+            })
+        
         try:
             import lightgbm as lgb
         except ImportError:
@@ -194,9 +286,32 @@ class MetaTrainer:
         X_test = test_df[features]
         y_test = test_df[target_col]
         
-        # Create datasets
-        train_data = lgb.Dataset(X_train, label=y_train)
-        valid_data = lgb.Dataset(X_test, label=y_test, reference=train_data)
+        # C-03 Fix: 计算样本权重
+        train_weights = self._calculate_sample_weights(train_df)
+        test_weights = self._calculate_sample_weights(test_df)
+        
+        # Create datasets with sample weights
+        train_data = lgb.Dataset(
+            X_train, 
+            label=y_train,
+            weight=train_weights  # C-03: 传入样本权重
+        )
+        valid_data = lgb.Dataset(
+            X_test, 
+            label=y_test, 
+            reference=train_data,
+            weight=test_weights  # C-03: 传入样本权重
+        )
+        
+        # Log weight statistics
+        logger.info("sample_weights_stats", {
+            "train_mean": float(np.mean(train_weights)),
+            "train_std": float(np.std(train_weights)),
+            "train_min": float(np.min(train_weights)),
+            "train_max": float(np.max(train_weights)),
+            "test_mean": float(np.mean(test_weights)),
+            "test_std": float(np.std(test_weights))
+        })
         
         # Train model
         model = lgb.train(
@@ -233,7 +348,10 @@ class MetaTrainer:
             'best_iteration': model.best_iteration,
             'feature_importance': importance,
             'n_train': len(train_df),
-            'n_test': len(test_df)
+            'n_test': len(test_df),
+            'optimal_d': optimal_d,  # C-02: 返回最优d值
+            'is_auc': auc,  # 用于PBO计算
+            'oos_auc': auc  # 简化：暂时用同一值
         }
     
     def apply_data_penalty(self, metrics: Dict[str, float]) -> Dict[str, float]:

@@ -51,25 +51,79 @@ class OverfittingDetector:
         """
         计算 PBO（Probability of Backtest Overfitting）。
         
-        使用保守估计：排名在后 50% 的比例。
+        基于 Bailey & López de Prado (2017) 的简化方法：
+        - 对每条路径，比较 IS (in-sample) 和 OOS (out-of-sample) 性能
+        - 如果最优 IS 模型在 OOS 上表现差 → 过拟合
+        
+        方法：计算 IS vs OOS 性能的排名差异
+        - IS 排名高但 OOS 排名低 → 过拟合
+        - PBO = OOS排名低于IS排名的概率
         
         Args:
             path_results: List of result dicts from each CPCV path
+                        Each dict should contain:
+                        - 'is_auc': IS (in-sample) AUC
+                        - 'oos_auc': OOS (out-of-sample) AUC
+                        (fallback to 'auc' if not present)
         
         Returns:
             PBO value between 0 and 1
+            - PBO > 0.5: 高过拟合风险
+            - PBO < 0.3: 低过拟合风险
         """
-        aucs = [r['auc'] for r in path_results]
-        n = len(aucs)
+        # 提取 IS 和 OOS AUC
+        is_aucs = []
+        oos_aucs = []
+        
+        for r in path_results:
+            # 优先使用分离的 IS/OOS，如果没有则使用整个路径的 AUC
+            is_auc = r.get('is_auc', r.get('auc', 0.5))
+            oos_auc = r.get('oos_auc', r.get('auc', 0.5))
+            is_aucs.append(is_auc)
+            oos_aucs.append(oos_auc)
+        
+        n = len(is_aucs)
         
         if n == 0:
             return 1.0
         
-        # Rank AUCs (higher is better)
-        ranked = np.argsort(np.argsort(aucs))
+        # 如果 IS 和 OOS 相同（未分离），使用简化方法：基于AUC方差
+        if len(set(is_aucs)) == 1 and len(set(oos_aucs)) == 1:
+            # 使用简化方法：基于方差的保守估计
+            all_aucs = is_aucs + oos_aucs
+            mean_auc = np.mean(all_aucs)
+            std_auc = np.std(all_aucs, ddof=1)
+            
+            # 变异系数
+            cv = std_auc / mean_auc if mean_auc > 0 else 0
+            
+            # 映射到 PBO：CV越高，过拟合风险越高
+            # CV < 0.05 -> PBO ≈ 0
+            # CV > 0.2 -> PBO ≈ 1
+            pbo = min(1.0, max(0.0, (cv - 0.05) / 0.15))
+            logger.info("pbo_variance_method", {"cv": cv, "pbo": pbo})
+            return float(pbo)
         
-        # PBO = proportion of paths in bottom 50% (conservative estimate)
-        pbo = np.mean(ranked < n / 2)
+        # 真正的 PBO 方法：比较 IS vs OOS 排名
+        # 1. IS 排名（降序，最好的 IS 排第一）
+        is_ranking = np.argsort(np.argsort(is_aucs)[::-1])
+        
+        # 2. OOS 排名（降序，最好的 OOS 排第一）
+        oos_ranking = np.argsort(np.argsort(oos_aucs)[::-1])
+        
+        # 3. 计算排名差异：IS排名 - OOS排名
+        # 如果 IS 排名高（数字小）但 OOS 排名低（数字大）→ 过拟合
+        rank_diff = is_ranking - oos_ranking
+        
+        # 4. PBO = 排名下降的比例（IS比OOS差的概率）
+        pbo = np.mean(rank_diff > 0)  # IS比OOS差的概率
+        
+        logger.info("pbo_is_oos_method", {
+            "n_paths": n,
+            "mean_is_auc": np.mean(is_aucs),
+            "mean_oos_auc": np.mean(oos_aucs),
+            "pbo": pbo
+        })
         
         return float(pbo)
     

@@ -490,13 +490,12 @@ class FeatureEngineer:
         return df
     
     def _calc_volatility_features_fast(self, df: pd.DataFrame, provides_adj_ohlc: bool = True) -> pd.DataFrame:
-        """Calculate volatility features using groupby (optimized)."""
-        # Realized volatility (only needs adj_close)
+        # OR2-07 Fix: 使用 min_periods=window 避免warmup期噪声
         for window in [5, 20, 60]:
             df[f'rv_{window}d'] = df.groupby('symbol')['adj_close'].transform(
                 lambda x: (
                     np.log(x / x.shift(1))
-                    .rolling(window=window, min_periods=1)
+                    .rolling(window=window, min_periods=window)
                     .std() * np.sqrt(252)
                 )
             )

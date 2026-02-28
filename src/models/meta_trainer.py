@@ -329,7 +329,15 @@ class MetaTrainer:
         # Metrics
         from sklearn.metrics import roc_auc_score, accuracy_score, log_loss
         
-        auc = roc_auc_score(y_test, y_pred_proba)
+        # OR2-01 Fix: 计算 IS (train) AUC 和 OOS (test) AUC
+        # 对训练集做预测得到 IS AUC
+        y_train_pred_proba = model.predict(X_train, num_iteration=model.best_iteration)
+        try:
+            is_auc = roc_auc_score(y_train, y_train_pred_proba)
+        except:
+            is_auc = 0.5  # fallback
+        
+        oos_auc = roc_auc_score(y_test, y_pred_proba)
         accuracy = accuracy_score(y_test, y_pred)
         
         try:
@@ -341,7 +349,7 @@ class MetaTrainer:
         importance = dict(zip(current_features, model.feature_importance(importance_type='gain')))
         
         return {
-            'auc': auc,
+            'auc': oos_auc,
             'accuracy': accuracy,
             'log_loss': loss,
             'best_iteration': model.best_iteration,
@@ -349,8 +357,8 @@ class MetaTrainer:
             'n_train': len(train_df),
             'n_test': len(test_df),
             'optimal_d': optimal_d,  # C-02: 返回最优d值
-            'is_auc': auc,  # 用于PBO计算
-            'oos_auc': auc  # 简化：暂时用同一值
+            'is_auc': is_auc,  # OR2-01 Fix: 真实的IS AUC
+            'oos_auc': oos_auc  # OOS AUC
         }
     
     def apply_data_penalty(self, metrics: Dict[str, float]) -> Dict[str, float]:
@@ -421,21 +429,12 @@ class MetaTrainer:
             train_df = df_meta.iloc[train_idx].copy()
             test_df = df_meta.iloc[test_idx].copy()
             
-            # Find optimal d for FracDiff (placeholder - actual implementation in Step 3)
-            # For now, use default d=0.5
-            optimal_d = 0.5
-            frac_col = f'fracdiff_{int(optimal_d*10)}'
-            
-            # Add fracdiff feature if not present
-            if frac_col not in features:
-                current_features = features + [frac_col]
-            else:
-                current_features = features
+            # OR2-02 Fix: 直接传原始features给fold，fold内部负责FracDiff计算
+            # 不要在此处构造fracdiff_5列名
             
             # Train this fold
-            result = self._train_cpcv_fold(train_df, test_df, current_features)
+            result = self._train_cpcv_fold(train_df, test_df, features)  # 用原始features
             result['path_idx'] = path_idx
-            result['optimal_d'] = optimal_d
             path_results.append(result)
         
         logger.info(f"Completed {len(path_results)} paths")

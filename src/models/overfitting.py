@@ -189,9 +189,16 @@ class OverfittingDetector:
         # - For Sharpe: 0.0 = zero excess return
         # Note: If classes are imbalanced, baseline should be max(class_prior)
         
-        # 使用 accuracy 作为业绩代理指标（替代 Sharpe Ratio）
-        # 在 meta-labeling 中，accuracy 比 sharpe 更稳定
-        metrics = [r.get('accuracy', r.get('auc', 0.5)) for r in path_results]
+        # OR2-04 Fix: 分别收集metrics和baselines
+        metrics = []
+        baselines = []
+        
+        for r in path_results:
+            metrics.append(r.get('accuracy', r.get('auc', 0.5)))
+            # 从实际数据获取baseline
+            baselines.append(r.get('positive_ratio', 0.5))
+        
+        baseline = np.mean(baselines) if baselines else 0.5
         
         if len(metrics) < 2:
             logger.warn("deflated_sharpe_insufficient_data", {"n_paths": len(metrics)})
@@ -208,9 +215,7 @@ class OverfittingDetector:
         
         se_sr = std_sr / np.sqrt(n)
         
-        # Deflated Sharpe (assuming SR₀ = 0.5 for accuracy, 0 for raw sharpe)
-        # For accuracy, baseline is 0.5 (random guessing)
-        baseline = r.get("positive_ratio", 0.5)
+        # OR2-04 Fix: baseline已在上方计算
         dsr = (mean_sr - baseline) / se_sr
         
         logger.info("deflated_sharpe", {

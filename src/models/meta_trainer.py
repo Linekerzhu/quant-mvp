@@ -229,20 +229,18 @@ class MetaTrainer:
         Returns:
             Dictionary with training results
         """
-        # C-02 Fix: 集成 FracDiff 特征计算
+        # OR2-02 Fix: 集成 FracDiff 特征计算
         from src.features.fracdiff import find_min_d_stationary, fracdiff_fixed_window
         
         # Step 1: 在训练集上找最优 d
         fracdiff_config = self.config.get('fracdiff', {})
-        d_values = fracdiff_config.get('d_values', [0.0, 0.1, 0.2, 0.3, 0.4, 0.5])
-        adf_threshold = fracdiff_config.get('adf_pvalue_threshold', 0.05)
         window = fracdiff_config.get('window', 100)
         
         try:
+            # OR2-02 Fix #3: 修正参数名 (threshold不是adf_pvalue_threshold)
             optimal_d = find_min_d_stationary(
-                train_df[price_col],
-                d_values=d_values,
-                adf_pvalue_threshold=adf_threshold
+                train_df[price_col],  # 传Series不是.values
+                threshold=0.05
             )
         except Exception as e:
             logger.warn("find_min_d_failed", {"error": str(e)})
@@ -251,17 +249,18 @@ class MetaTrainer:
         logger.info("fracdiff_optimal_d", {"optimal_d": optimal_d})
         
         # Step 2: 计算 FracDiff 特征（train + test）
+        # OR2-02 Fix #2: 传Series不是.values
         train_df = train_df.copy()
         test_df = test_df.copy()
         
         train_df['fracdiff'] = fracdiff_fixed_window(
-            train_df[price_col].values, optimal_d, window
+            np.log(train_df[price_col]), optimal_d, window  # OR2-03: 使用log(price)
         )
         test_df['fracdiff'] = fracdiff_fixed_window(
-            test_df[price_col].values, optimal_d, window
+            np.log(test_df[price_col]), optimal_d, window  # OR2-03: 使用log(price)
         )
         
-        # Step 3: 添加到特征列表
+        # Step 3: 添加到特征列表（只用fracdiff，不是fracdiff_5）
         current_features = features + ['fracdiff']
         
         # Step 4: 去除 NaN（FracDiff burn-in period）

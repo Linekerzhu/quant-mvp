@@ -110,7 +110,7 @@ class CombinatorialPurgedKFold:
             n_splits=cpcv.get('n_splits', 6),
             n_test_splits=cpcv.get('n_test_splits', 2),
             purge_window=cpcv.get('purge_window', 10),
-            embargo_window=cpcv.get('embargo_window', 40),
+            embargo_window=cpcv.get('embargo_window', 60),
             min_data_days=cpcv.get('min_data_days', 200)
         )
     
@@ -274,7 +274,15 @@ class CombinatorialPurgedKFold:
                     seg_end_date + BDay(self.purge_window)
                 ))
             
-            embargo_end = test_max_date + BDay(self.embargo_window)
+            # BUG-02 Fix: embargo也改为逐段，与purge一致
+            embargo_ranges = []
+            for seg_idx in test_seg_indices:
+                seg_end = segments[seg_idx][1] - 1
+                seg_end_date = df.at[seg_end, date_col]
+                embargo_ranges.append((
+                    seg_end_date,
+                    seg_end_date + BDay(self.embargo_window)
+                ))
             
             train_indices = []
             for idx in range(n_samples):
@@ -283,7 +291,14 @@ class CombinatorialPurgedKFold:
                 
                 row_date = df.at[idx, date_col]
                 
-                if row_date <= embargo_end and row_date > test_max_date:
+                # BUG-02 Fix: 检查是否在任何test段的embargo范围内
+                should_embargo = False
+                for emb_start, emb_end in embargo_ranges:
+                    if row_date > emb_start and row_date <= emb_end:
+                        should_embargo = True
+                        break
+                
+                if should_embargo:
                     continue
                 
                 # C-02 Fix: 检查是否与任何test段的purge范围重叠

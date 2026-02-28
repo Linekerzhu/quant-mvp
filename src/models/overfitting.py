@@ -199,29 +199,37 @@ class OverfittingDetector:
             # HIGH-02 Fix: 从实际数据获取baseline
             baselines.append(r.get('positive_ratio', 0.5))
         
-        baseline = np.mean(baselines) if baselines else 0.5
+        baselines = []
         
-        if len(metrics) < 2:
-            logger.warn("deflated_sharpe_insufficient_data", {"n_paths": len(metrics)})
+        for r in path_results:
+            metrics.append(r.get('accuracy', r.get('auc', 0.5)))
+            # HIGH-02 Fix: 从实际数据获取baseline
+            baselines.append(r.get('positive_ratio', 0.5))
+        
+        # BUG-03 Fix: 使用per-path excess计算DSR
+        # 计算每个path相对于自己baseline的excess
+        excess = [metrics[i] - baselines[i] for i in range(len(metrics))]
+        excess = np.array(excess)
+        mean_excess = np.mean(excess)
+        std_excess = np.std(excess, ddof=1)
+        n = len(excess)
+        
+        if n < 2:
+            logger.warn("deflated_sharpe_insufficient_data", {"n_paths": n})
             return 0.0
         
-        mean_sr = np.mean(metrics)
-        std_sr = np.std(metrics, ddof=1)
-        n = len(metrics)
+        # BUG-05 Fix: 零variance正确处理
+        if std_excess < 1e-10:
+            if mean_excess > 1e-6:
+                return 20.0  # 确定性超过baseline
+            else:
+                return 0.0   # 确定性未超过baseline
         
-        # HIGH-01 Fix: epsilon guard for numerical stability
-        if std_sr < 1e-10 or n < 2:
-            logger.warn("deflated_sharpe_zero_variance", {"std": std_sr, "n": n})
-            return 0.0
-        
-        se_sr = std_sr / np.sqrt(n)
-        
-        # OR2-04 Fix: baseline已在上方计算
-        dsr = (mean_sr - baseline) / se_sr
+        dsr = mean_excess / (std_excess / np.sqrt(n))
         
         logger.info("deflated_sharpe", {
-            "mean_metric": mean_sr,
-            "std_metric": std_sr,
+            "mean_excess": mean_excess,
+            "std_excess": std_excess,
             "n_paths": n,
             "dsr": dsr
         })

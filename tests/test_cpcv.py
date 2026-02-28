@@ -39,7 +39,7 @@ class TestCombinatorialPurgedKFold:
             n_splits=6,
             n_test_splits=2,
             purge_window=10,
-            embargo_window=40,
+            embargo_window=60,
             min_data_days=200
         )
     
@@ -49,7 +49,7 @@ class TestCombinatorialPurgedKFold:
         assert cpcv.n_splits == 6
         assert cpcv.n_test_splits == 2
         assert cpcv.purge_window == 10
-        assert cpcv.embargo_window == 40
+        assert cpcv.embargo_window == 60
         # Note: min_data_days is loaded from config, default is 200
     
     def test_init_custom(self):

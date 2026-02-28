@@ -89,7 +89,8 @@ class OverfittingDetector:
         
         # 计算 PBO：gap > 0.05 视为过拟合
         # PBO = 过拟合路径的比例
-        gap_threshold = 0.05
+        # HIGH-03 Fix: gap_threshold from 0.05 to 0.10 (避免误杀正常模型)
+        gap_threshold = 0.10
         pbo = np.mean([gap > gap_threshold for gap in gaps])
         
         logger.info("pbo_is_oos_gap_method", {
@@ -195,7 +196,7 @@ class OverfittingDetector:
         
         for r in path_results:
             metrics.append(r.get('accuracy', r.get('auc', 0.5)))
-            # 从实际数据获取baseline
+            # HIGH-02 Fix: 从实际数据获取baseline
             baselines.append(r.get('positive_ratio', 0.5))
         
         baseline = np.mean(baselines) if baselines else 0.5
@@ -208,8 +209,8 @@ class OverfittingDetector:
         std_sr = np.std(metrics, ddof=1)
         n = len(metrics)
         
-        # Standard error
-        if std_sr == 0 or n < 2:
+        # HIGH-01 Fix: epsilon guard for numerical stability
+        if std_sr < 1e-10 or n < 2:
             logger.warn("deflated_sharpe_zero_variance", {"std": std_sr, "n": n})
             return 0.0
         

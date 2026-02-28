@@ -237,9 +237,9 @@ class MetaTrainer:
         window = fracdiff_config.get('window', 100)
         
         try:
-            # OR2-02 Fix #3: 修正参数名 (threshold不是adf_pvalue_threshold)
+            # MEDIUM-01 Fix: d在log(price)空间搜索，与应用空间一致
             optimal_d = find_min_d_stationary(
-                train_df[price_col],  # 传Series不是.values
+                np.log(train_df[price_col]),  # log space
                 threshold=0.05
             )
         except Exception as e:
@@ -358,7 +358,8 @@ class MetaTrainer:
             'n_test': len(test_df),
             'optimal_d': optimal_d,  # C-02: 返回最优d值
             'is_auc': is_auc,  # OR2-01 Fix: 真实的IS AUC
-            'oos_auc': oos_auc  # OOS AUC
+            'oos_auc': oos_auc,  # OOS AUC
+            'positive_ratio': float((y_test == 1).mean())  # HIGH-02: for DSR baseline
         }
     
     def apply_data_penalty(self, metrics: Dict[str, float]) -> Dict[str, float]:
@@ -447,11 +448,10 @@ class MetaTrainer:
         pbo_passed = overfitting_result['pbo_passed']
         pbo_message = overfitting_result['pbo_message']
         
-        logger.info(f"  PBO = {pbo:.2f}: {pbo_message}")
-        
-        if not pbo_passed:
-            logger.error(f"PBO Gate BLOCKED: {pbo_message}")
-            raise RuntimeError(f"PBO Gate BLOCKED: {pbo_message}")
+        # HIGH-04 Fix: Use overall_passed (PBO + DSR + Dummy)
+        if not overfitting_result['overall_passed']:
+            logger.error(f"Overfitting Gate BLOCKED: PBO={pbo_message}, DSR={overfitting_result.get('dsr_message', 'N/A')}")
+            raise RuntimeError(f"Overfitting Gate BLOCKED: PBO={pbo_message}, DSR={overfitting_result.get('dsr_message', 'N/A')}")
         
         # Step 6: Aggregate results
         aucs = [r['auc'] for r in path_results]

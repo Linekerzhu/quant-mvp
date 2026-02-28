@@ -69,7 +69,7 @@ class CombinatorialPurgedKFold:
         n_splits: int = 6,
         n_test_splits: int = 2,
         purge_window: int = 10,
-        embargo_window: int = 40,
+        embargo_window: int = 60,  # MEDIUM-03: 与config保持一致
         min_data_days: int = 200,
         config_path: str = None  # Deprecated, kept for backward compatibility
     ):

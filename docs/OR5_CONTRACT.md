@@ -125,14 +125,18 @@ reported_mdd = raw_mdd + 0.10    # 25%
 
 ## 契约签署
 
-- [x] 契约 1: LightGBM 参数锁死 ✅
-- [ ] 契约 2: Meta-Labeling 架构
-- [ ] 契约 3: FracDiff 特征
-- [ ] 契约 4: CPCV 手写切分器
-- [ ] 拨备: 回测扣减
+- [x] 契约 1: LightGBM 参数锁死 ✅ (training.yaml)
+- [x] 契约 2: Meta-Labeling 架构 ✅ (src/models/meta_trainer.py)
+- [x] 契约 3: FracDiff 特征 ✅ (src/features/fracdiff.py)
+- [x] 契约 4: CPCV 手写切分器 ✅ (src/models/purged_kfold.py)
+- [x] 拨备: 回测扣减 ✅ (src/models/overfitting.py DataPenaltyApplier)
+
+**更新日期**: 2026-02-28
+**更新人**: 李得勤
 
 ---
 
 *审计官签名: OR5 External Audit*
 *工程负责人: quant-mvp team*
 *日期: 2026-02-25*
+*契约完成: 2026-02-28*

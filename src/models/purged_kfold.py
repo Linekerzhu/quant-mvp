@@ -177,13 +177,21 @@ class CombinatorialPurgedKFold:
             test_min_date = test_dates.min()
             test_max_date = test_dates.max()
             
-            # Calculate purge range using actual exit dates
-            # Purge: Any sample whose [entry, exit] overlaps with test period
-            # H-02 Fix: 使用 BDay (交易日) 而非日历日
-            purge_start = test_min_date - BDay(self.purge_window)
-            purge_end = test_max_date + BDay(self.purge_window)
+            # BUG-01 Fix: 对每个test段分别purge，而不是用凸包
+            # 计算每个test段的purge范围
+            test_ranges = []
+            for seg_idx in test_seg_indices:
+                seg_start = segments[seg_idx][0]
+                seg_end = segments[seg_idx][1] - 1
+                seg_start_date = df.loc[seg_start, date_col]
+                seg_end_date = df.loc[seg_end, date_col]
+                # 该段的purge范围
+                test_ranges.append((
+                    seg_start_date - BDay(self.purge_window),
+                    seg_end_date + BDay(self.purge_window)
+                ))
             
-            # Calculate embargo range
+            # Calculate embargo range (仍然用全局，因为是test之后的窗口)
             embargo_end = test_max_date + BDay(self.embargo_window)
             
             # Build train set with purging and embargo
@@ -198,13 +206,20 @@ class CombinatorialPurgedKFold:
                 if row_date <= embargo_end and row_date > test_max_date:
                     continue
                 
-                # Check purge overlap using both entry_date and exit_date
+                # BUG-01 Fix: 检查是否与任何test段的purge范围重叠
                 if exit_date_col in df.columns:
-                    entry_date = df.loc[idx, date_col]  # entry date
+                    entry_date = df.loc[idx, date_col]
                     exit_date = df.loc[idx, exit_date_col]
                     
-                    if _has_overlap(entry_date, exit_date, purge_start, purge_end):
-                        continue  # 有重叠，跳过
+                    # 检查是否与任何test段的purge有重叠
+                    should_purge = False
+                    for pr_start, pr_end in test_ranges:
+                        if _has_overlap(entry_date, exit_date, pr_start, pr_end):
+                            should_purge = True
+                            break
+                    
+                    if should_purge:
+                        continue
                 
                 train_indices.append(idx)
             

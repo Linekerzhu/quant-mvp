@@ -54,7 +54,8 @@ class LabelConverter:
         """
         if self.strategy == 'binary_filtered':
             # Filter out label=0 (time barriers)
-            df = df[df['label'] != 0].copy()
+            # BUG-03 Fix: 先过滤NaN，再过滤label=0
+            df = df[df['label'].notna() & (df['label'] != 0)].copy()
             
             # Map {-1: 0, +1: 1} for binary classification
             df['meta_label'] = df['label'].map(self.mapping)

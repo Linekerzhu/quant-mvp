@@ -131,7 +131,7 @@ class MetaTrainer:
         2. Return: 样本的收益贡献（可选）
         
         Args:
-            df: DataFrame with 'uniqueness' column (from Phase B)
+            df: DataFrame with 'sample_weight' column (from Phase B)  # BUG-02 Fix
         
         Returns:
             Array of sample weights (normalized to mean=1)
@@ -140,12 +140,12 @@ class MetaTrainer:
         method = weight_config.get('method', 'uniqueness')
         
         if method == 'uniqueness':
-            # 使用 uniqueness 列（应由 Phase B 生成）
-            if 'uniqueness' in df.columns:
-                weights = df['uniqueness'].values.copy()
+            # BUG-02 Fix: 读取 'sample_weight' 列
+            if 'sample_weight' in df.columns:
+                weights = df['sample_weight'].values.copy()
             else:
                 # Fallback: 均匀权重
-                logger.warn("uniqueness_column_missing", {})
+                logger.warn("sample_weight_column_missing", {})
                 weights = np.ones(len(df))
         elif method == 'equal':
             weights = np.ones(len(df))

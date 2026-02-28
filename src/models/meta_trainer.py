@@ -280,10 +280,10 @@ class MetaTrainer:
         except ImportError:
             raise ImportError("lightgbm is required for training")
         
-        # Prepare data
-        X_train = train_df[features]
+        # Prepare data - C-02 Fix: 使用 current_features 包含 fracdiff
+        X_train = train_df[current_features]
         y_train = train_df[target_col]
-        X_test = test_df[features]
+        X_test = test_df[current_features]
         y_test = test_df[target_col]
         
         # C-03 Fix: 计算样本权重
@@ -339,7 +339,7 @@ class MetaTrainer:
             loss = None
         
         # Feature importance
-        importance = dict(zip(features, model.feature_importance(importance_type='gain')))
+        importance = dict(zip(current_features, model.feature_importance(importance_type='gain')))
         
         return {
             'auc': auc,

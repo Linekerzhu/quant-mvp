@@ -62,7 +62,7 @@ embargo:
   feature_lookback: 60  # Maximum feature lookback window (unchanged)
   execution_delay: 1    # Signal to execution delay
   corporate_action_latency: 0  # Corporate action info delay
-  total_days: 40  # P1 (R28-A1): Synced with training.yaml (was 60)
+  total_days: 60  # OR5: Synced with training.yaml
   
   # ⚠️ OR5-CODE T7: embargo_window(40) < feature_lookback(60)
   # plan.md §6.5 公式要求 embargo = max(feature_lookback,...) = 60

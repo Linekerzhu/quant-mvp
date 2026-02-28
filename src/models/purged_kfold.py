@@ -200,7 +200,7 @@ class CombinatorialPurgedKFold:
                 if idx in test_indices:
                     continue
                 
-                row_date = df.loc[idx, date_col]
+                row_date = df.at[idx, date_col]
                 
                 # Skip if within embargo period
                 if row_date <= embargo_end and row_date > test_max_date:
@@ -208,8 +208,8 @@ class CombinatorialPurgedKFold:
                 
                 # BUG-01 Fix: 检查是否与任何test段的purge范围重叠
                 if exit_date_col in df.columns:
-                    entry_date = df.loc[idx, date_col]
-                    exit_date = df.loc[idx, exit_date_col]
+                    entry_date = df.at[idx, date_col]
+                    exit_date = df.at[idx, exit_date_col]
                     
                     # 检查是否与任何test段的purge有重叠
                     should_purge = False
@@ -262,9 +262,18 @@ class CombinatorialPurgedKFold:
             test_min_date = test_dates.min()
             test_max_date = test_dates.max()
             
-            # OR2-05 Fix: 使用 BDay (交易日) 而非日历日
-            purge_start = test_min_date - BDay(self.purge_window)
-            purge_end = test_max_date + BDay(self.purge_window)
+            # C-02 Fix: 与split()保持一致，对每个test段分别purge
+            test_ranges = []
+            for seg_idx in test_seg_indices:
+                seg_start = segments[seg_idx][0]
+                seg_end = segments[seg_idx][1] - 1
+                seg_start_date = df.loc[seg_start, date_col]
+                seg_end_date = df.loc[seg_end, date_col]
+                test_ranges.append((
+                    seg_start_date - BDay(self.purge_window),
+                    seg_end_date + BDay(self.purge_window)
+                ))
+            
             embargo_end = test_max_date + BDay(self.embargo_window)
             
             train_indices = []
@@ -272,18 +281,24 @@ class CombinatorialPurgedKFold:
                 if idx in test_indices:
                     continue
                 
-                row_date = df.loc[idx, date_col]
+                row_date = df.at[idx, date_col]
                 
                 if row_date <= embargo_end and row_date > test_max_date:
                     continue
                 
-                # Check purge overlap using both entry_date and exit_date
+                # C-02 Fix: 检查是否与任何test段的purge范围重叠
                 if exit_date_col in df.columns:
-                    entry_date = df.loc[idx, date_col]  # entry date
-                    exit_date = df.loc[idx, exit_date_col]
+                    entry_date = df.at[idx, date_col]  # entry date
+                    exit_date = df.at[idx, exit_date_col]
                     
-                    if _has_overlap(entry_date, exit_date, purge_start, purge_end):
-                        continue  # 有重叠，跳过
+                    should_purge = False
+                    for pr_start, pr_end in test_ranges:
+                        if _has_overlap(entry_date, exit_date, pr_start, pr_end):
+                            should_purge = True
+                            break
+                    
+                    if should_purge:
+                        continue
                 
                 train_indices.append(idx)
             
@@ -375,7 +390,7 @@ class PurgedKFold:
                 if idx in test_indices:
                     continue
                 
-                row_date = df.loc[idx, date_col]
+                row_date = df.at[idx, date_col]
                 
                 # Embargo check
                 if row_date <= embargo_end and row_date > test_max_date:
@@ -383,8 +398,8 @@ class PurgedKFold:
                 
                 # Purge check using both entry_date and exit_date
                 if exit_date_col in df.columns:
-                    entry_date = df.loc[idx, date_col]  # entry date
-                    exit_date = df.loc[idx, exit_date_col]
+                    entry_date = df.at[idx, date_col]  # entry date
+                    exit_date = df.at[idx, exit_date_col]
                     
                     if pd.notna(exit_date) and pd.notna(entry_date):
                         # Check if holding period overlaps with [test_min_date, purge_end]

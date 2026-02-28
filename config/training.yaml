@@ -93,7 +93,7 @@ validation:
     # P2 (R27-B1): Reduced embargo to ensure all paths have >= 200d training
     # Previous 60d: gap=70d, 3/15 paths had only 56d effective training
     # Now 40d: gap=50d, all paths have >= 238d effective training
-    embargo_window: 40  # days (was 60)
+    embargo_window: 60  # OR2-06: 60 days to match max feature lookback (was 40)
     # Minimum data length formula (per plan §6.5):
     # min_days = n_splits * (purge + embargo) / (n_splits - n_test_splits)
     #          = 6 * 50 / 4 = 75 days per test fold pair

@@ -462,15 +462,15 @@ class TestConfigConsistency:
         assert lgb['min_data_in_leaf'] == 200, f"min_data_in_leaf should be 200"
         assert lgb['lambda_l1'] == 1.0, f"lambda_l1 should be 1.0"
     
-    def test_embargo_is_40(self):
-        """Embargo window should be 40 (R27-B1)."""
+    def test_embargo_is_60(self):
+        """Embargo window should be 60 (OR2-06: match max feature lookback)."""
         config_path = Path(__file__).parent.parent / 'config' / 'training.yaml'
         
         with open(config_path) as f:
             cfg = yaml.safe_load(f)
         
         embargo = cfg['validation']['cpcv']['embargo_window']
-        assert embargo == 40, f"embargo_window should be 40, got {embargo}"
+        assert embargo == 60, f"embargo_window should be 60, got {embargo}"
     
     def test_min_data_days_is_630(self):
         """min_data_days should be 630 (R27-B1)."""

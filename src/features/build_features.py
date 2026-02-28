@@ -278,8 +278,9 @@ class FeatureEngineer:
                                 df.loc[mask, 'adj_close'].shift(1))
             
             for window in [5, 20, 60]:
+                # OR2-07 Fix: Use min_periods=window to avoid noisy estimates in warmup period
                 df.loc[mask, f'rv_{window}d'] = (
-                    log_returns.rolling(window=window, min_periods=1).std() * np.sqrt(252)
+                    log_returns.rolling(window=window, min_periods=window).std() * np.sqrt(252)
                 )
             
             # FIX A1: Use ATR window from event_protocol.yaml, rename column to match

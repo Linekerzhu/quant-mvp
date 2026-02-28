@@ -210,7 +210,7 @@ class OverfittingDetector:
         
         # Deflated Sharpe (assuming SR₀ = 0.5 for accuracy, 0 for raw sharpe)
         # For accuracy, baseline is 0.5 (random guessing)
-        baseline = 0.5
+        baseline = r.get("positive_ratio", 0.5)
         dsr = (mean_sr - baseline) / se_sr
         
         logger.info("deflated_sharpe", {

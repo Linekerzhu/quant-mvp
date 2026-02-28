@@ -247,9 +247,10 @@ class CombinatorialPurgedKFold:
             test_min_date = test_dates.min()
             test_max_date = test_dates.max()
             
-            purge_start = test_min_date - pd.Timedelta(days=self.purge_window)
-            purge_end = test_max_date + pd.Timedelta(days=self.purge_window)
-            embargo_end = test_max_date + pd.Timedelta(days=self.embargo_window)
+            # OR2-05 Fix: 使用 BDay (交易日) 而非日历日
+            purge_start = test_min_date - BDay(self.purge_window)
+            purge_end = test_max_date + BDay(self.purge_window)
+            embargo_end = test_max_date + BDay(self.embargo_window)
             
             train_indices = []
             for idx in range(n_samples):
@@ -347,11 +348,11 @@ class PurgedKFold:
             test_min_date = test_dates.min()
             test_max_date = test_dates.max()
             
-            # Purge range
-            purge_end = test_max_date + pd.Timedelta(days=self.purge_window)
+            # OR2-05 Fix: 使用 BDay (交易日)
+            purge_end = test_max_date + BDay(self.purge_window)
             
             # Embargo range
-            embargo_end = test_max_date + pd.Timedelta(days=self.embargo_window)
+            embargo_end = test_max_date + BDay(self.embargo_window)
             
             # Build train set
             train_indices = []

@@ -263,6 +263,9 @@ class TripleBarrierLabeler:
         has_adj_ohlc = all(col in symbol_df.columns and pd.notna(symbol_df.loc[entry_idx, col]) 
                           for col in ['adj_open', 'adj_high', 'adj_low', 'adj_close'])
         
+        # EXT2-Q3 Fix: 添加降级标记
+        degraded_suffix = '' if has_adj_ohlc else '_degraded'
+        
         if has_adj_ohlc:
             # Entry price (T+1 open)
             entry_price = symbol_df.loc[entry_idx, 'adj_open']
@@ -356,13 +359,13 @@ class TripleBarrierLabeler:
                     # 开盘直接跳穿止损 → 用实际开盘价结算（更惨）
                     exit_price = day_open
                     ret = np.log(exit_price / entry_price)
-                    return (-1, 'loss_gap', ret, day, exit_date)
+                    return (-1, 'loss_gap' + degraded_suffix, ret, day, exit_date)
                 
                 if day_open >= profit_barrier:
                     # 开盘直接跳穿止盈 → 用实际开盘价结算（比barrier更好但也更真实）
                     exit_price = day_open
                     ret = np.log(exit_price / entry_price)
-                    return (1, 'profit_gap', ret, day, exit_date)
+                    return (1, 'profit_gap' + degraded_suffix, ret, day, exit_date)
             
             # STEP 2: Collision Detection (同日双穿检测)
             # R33-A1: Also applies to day=0
@@ -373,7 +376,7 @@ class TripleBarrierLabeler:
                 # 同日双穿 → 强制止损（最悲观原则）
                 exit_price = loss_barrier
                 ret = np.log(exit_price / entry_price)
-                return (-1, 'loss_collision', ret, day, exit_date)
+                return (-1, 'loss_collision' + degraded_suffix, ret, day, exit_date)
             
             # STEP 3: Normal Path (正常路径)
             # R33-A1: Also applies to day=0
@@ -382,12 +385,12 @@ class TripleBarrierLabeler:
             if day_low <= loss_barrier:
                 exit_price = loss_barrier
                 ret = np.log(exit_price / entry_price)  # B24: Log return
-                return (-1, 'loss', ret, day, exit_date)
+                return (-1, 'loss' + degraded_suffix, ret, day, exit_date)
             
             if day_high >= profit_barrier:
                 exit_price = profit_barrier
                 ret = np.log(exit_price / entry_price)  # B24: Log return
-                return (1, 'profit', ret, day, exit_date)
+                return (1, 'profit' + degraded_suffix, ret, day, exit_date)
         
         # Time barrier hit
         exit_idx = min(entry_idx + self.max_holding_days, len(symbol_df) - 1)
@@ -399,7 +402,7 @@ class TripleBarrierLabeler:
         if pd.isna(exit_price) or exit_price <= 0:
             # Cannot compute valid return - mark as invalid event
             # This will be caught by label_events and set event_valid=False
-            return (0, 'time_invalid_exit', np.nan, self.max_holding_days, exit_date)
+            return (0, 'time_invalid_exit' + degraded_suffix, np.nan, self.max_holding_days, exit_date)
         
         ret = np.log(exit_price / entry_price)  # B24: Log return
         
@@ -408,7 +411,7 @@ class TripleBarrierLabeler:
         # Using sign of return would conflate +0.0003 with +0.043
         label = 0
         
-        return (label, 'time', ret, self.max_holding_days, exit_date)
+        return (label, 'time' + degraded_suffix, ret, self.max_holding_days, exit_date)
     
     def get_label_distribution(self, df: pd.DataFrame) -> Dict:
         """

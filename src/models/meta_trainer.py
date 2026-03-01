@@ -386,7 +386,15 @@ class MetaTrainer:
         except:
             is_auc = 0.5  # fallback
         
-        oos_auc = roc_auc_score(y_test, y_pred_proba)
+        # EXT2-Q6 Fix: oos_auc 添加异常保护，避免单类标签导致 NaN 污染
+        try:
+            oos_auc = roc_auc_score(y_test, y_pred_proba)
+            if np.isnan(oos_auc):
+                logger.warn("oos_auc_nan_detected", {"n_test": len(y_test), "label_distribution": {"positive": int((y_test==1).sum()), "negative": int((y_test==0).sum())}})
+                oos_auc = 0.5  # fallback
+        except:
+            oos_auc = 0.5  # fallback
+        
         accuracy = accuracy_score(y_test, y_pred)
         
         try:

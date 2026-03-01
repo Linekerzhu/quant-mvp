@@ -180,16 +180,19 @@ class SampleWeightCalculator:
                 continue
             
             entry_pos, exit_pos = range_info
-            # 计算持仓期间的日均并发数（排除 exit 当天）
+            # R22-F1: AFML Ch4 average uniqueness = mean(1/c(t))
+            # c(t) already includes self, so 1/c gives correct uniqueness
             if exit_pos > entry_pos:
                 concurrent_days = daily_concurrent[entry_pos:exit_pos]
-                avg_concurrent = concurrent_days.mean() if len(concurrent_days) > 0 else 0
+                valid_days = concurrent_days[concurrent_days > 0]
+                if len(valid_days) > 0:
+                    avg_uniqueness = np.mean(1.0 / valid_days)
+                else:
+                    avg_uniqueness = 1.0
             else:
-                avg_concurrent = 0
+                avg_uniqueness = 1.0
             
-            # 计算权重：1 / (1 + concurrent)
-            weight = 1.0 / (1.0 + avg_concurrent)
-            weights.loc[e['idx']] = weight
+            weights.loc[e['idx']] = avg_uniqueness
         
         return weights
     

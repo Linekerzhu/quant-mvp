@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v4.7] - 2026-03-02
+
+### R23 深度审计修复 (Commit: `d5ed748`)
+
+**审计轮次**: R23 (2026-03-02)
+**审计官**: Internal Audit (张德功)
+**状态**: ✅ 已完成 - 165/165 测试通过
+
+### Fixed - 修复
+
+#### R23-F1 [P2→Phase D]: Model/Features Persistence
+- **问题**: MetaTrainer.train()未返回model对象，Phase D推理需要
+- **修复**: Gate PASS后用全量数据训练最终模型，返回model + feature_list
+- **文件**: `src/models/meta_trainer.py`
+- **返回值**: `model`, `feature_list`, `n_training_samples`
+
+### Changed - 修改
+- `meta_trainer.py`: Gate PASS后训练最终模型并返回
+
+---
+
 ## [v4.6] - 2026-03-02
 
 ### R22 深度审计修复 (Commit: `17189fb`)

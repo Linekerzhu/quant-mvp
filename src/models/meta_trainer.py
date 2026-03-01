@@ -587,6 +587,20 @@ class MetaTrainer:
             logger.error(f"F7: All {len(path_results)} paths failed - possible data or code error")
             raise RuntimeError(f"F7: All CPCV paths failed. Check data quality and model configuration.")
         
+        # R21-F1: Dead path detection - 检查是否有过多死模型（常数预测）
+        dead_paths = [r for r in path_results if r.get('best_iteration', 0) <= 1]
+        dead_ratio = len(dead_paths) / len(path_results) if path_results else 0
+        
+        if dead_ratio > 0.5:
+            logger.error(f"F8: {len(dead_paths)}/{len(path_results)} CPCV paths produced trivial models "
+                        f"(best_iteration≤1). Insufficient data for current model configuration.")
+            raise RuntimeError(
+                f"F8: {len(dead_paths)}/{len(path_results)} CPCV paths produced trivial models "
+                f"(best_iteration≤1). Need more samples or reduce min_data_in_leaf."
+            )
+        
+        logger.info(f"Dead path check: {len(dead_paths)}/{len(path_results)} ({dead_ratio*100:.1f}%)")
+        
         # Step 5: Calculate PBO
         logger.info("Step 5: Calculating PBO...")
         overfitting_result = self.overfitting_detector.check_overfitting(path_results)

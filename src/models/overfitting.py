@@ -236,7 +236,9 @@ class OverfittingDetector:
         
         for r in path_results:
             metrics.append(r.get('accuracy', r.get('auc', 0.5)))
-            baselines.append(r.get('positive_ratio', 0.5))
+            # R21-F2: Use majority-class baseline to prevent trivial models from gaming DSR
+            pr = r.get('positive_ratio', 0.5)
+            baselines.append(max(pr, 1 - pr))
         
         # BUG-03 Fix: 使用per-path excess计算DSR
         excess = [metrics[i] - baselines[i] for i in range(len(metrics))]
@@ -362,6 +364,10 @@ class OverfittingDetector:
         # R14-A9 Fix: 传递 per_fold_importance 进行 per-fold 检查
         dummy_result = self.dummy_feature_sentinel(avg_importance, per_fold_importance)
         
+        # R21-F1: Calculate dead path metrics
+        dead_path_count = sum(1 for r in path_results if r.get('best_iteration', 0) <= 1)
+        dead_path_ratio = dead_path_count / len(path_results) if path_results else 0
+        
         return {
             'pbo': pbo,
             'pbo_passed': pbo_passed,
@@ -370,6 +376,8 @@ class OverfittingDetector:
             'dsr_passed': dsr_passed,
             'dsr_message': dsr_message,
             'dummy_sentinel': dummy_result,
+            'dead_path_count': dead_path_count,
+            'dead_path_ratio': dead_path_ratio,
             'overall_passed': pbo_passed and dsr_passed and dummy_result.get('passed', True)
         }
 

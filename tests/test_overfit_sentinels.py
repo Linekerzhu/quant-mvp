@@ -378,7 +378,11 @@ def run_all_sentinels(X: pd.DataFrame, y: pd.Series, sample_weight=None) -> Dict
     try:
         passed, details = dummy_sentinel.run_test(X, y, sample_weight)
         results['dummy_sentinel'] = {'passed': passed, 'details': details}
+    except (NameError, TypeError) as e:
+        # F6 Fix: 编程错误立即抛出，不吞掉
+        raise
     except Exception as e:
+        # 业务异常记录但继续
         results['dummy_sentinel']['error'] = str(e)
     
     # Run time shuffle sentinel
@@ -386,7 +390,11 @@ def run_all_sentinels(X: pd.DataFrame, y: pd.Series, sample_weight=None) -> Dict
     try:
         passed, details = shuffle_sentinel.run_test(X, y, sample_weight)
         results['shuffle_sentinel'] = {'passed': passed, 'details': details}
+    except (NameError, TypeError) as e:
+        # F6 Fix: 编程错误立即抛出，不吞掉
+        raise
     except Exception as e:
+        # 业务异常记录但继续
         results['shuffle_sentinel']['error'] = str(e)
     
     # Overall result

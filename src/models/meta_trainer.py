@@ -403,7 +403,7 @@ class MetaTrainer:
             loss = None
         
         # Feature importance
-        importance = dict(zip(current_features, model.feature_importance(importance_type='gain')))
+        importance = dict(zip(features, model.feature_importance(importance_type='gain')))
         
         return {
             'auc': oos_auc,
@@ -574,6 +574,18 @@ class MetaTrainer:
             path_results.append(result)
         
         logger.info(f"Completed {len(path_results)} paths")
+        
+        # F7 Fix: 检查 path_results 是否为空，区分 crash 和过拟合
+        if not path_results:
+            # 检查是否有训练异常记录
+            logger.error("F7: No path results - possible crash during training")
+            raise RuntimeError("F7: CPCV training failed - no paths completed. Check logs for crash details.")
+        
+        # 检查是否有 path 返回了异常状态
+        failed_paths = [r for r in path_results if r.get('status') == 'failed' or r.get('auc') is None]
+        if len(failed_paths) == len(path_results):
+            logger.error(f"F7: All {len(path_results)} paths failed - possible data or code error")
+            raise RuntimeError(f"F7: All CPCV paths failed. Check data quality and model configuration.")
         
         # Step 5: Calculate PBO
         logger.info("Step 5: Calculating PBO...")

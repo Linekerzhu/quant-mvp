@@ -459,7 +459,7 @@ class TestConfigConsistency:
         # OR5 locked parameters
         assert lgb['max_depth'] == 3, f"max_depth should be 3, got {lgb['max_depth']}"
         assert lgb['num_leaves'] == 7, f"num_leaves should be 7, got {lgb['num_leaves']}"
-        assert lgb['min_data_in_leaf'] == 200, f"min_data_in_leaf should be 200"
+        assert lgb['min_data_in_leaf'] == 100, f"min_data_in_leaf should be 100 (R20-F1 fix)"
         assert lgb['lambda_l1'] == 1.0, f"lambda_l1 should be 1.0"
     
     def test_embargo_is_60(self):

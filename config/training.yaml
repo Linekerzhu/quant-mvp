@@ -89,7 +89,7 @@ validation:
   cpcv:
     n_splits: 6
     n_test_splits: 2
-    purge_window: 10  # days
+    purge_window: 60  # A8 Fix: >= max_feature_lookback (60d)
     # P2 (R27-B1): Reduced embargo to ensure all paths have >= 200d training
     # Previous 60d: gap=70d, 3/15 paths had only 56d effective training
     # Now 40d: gap=50d, all paths have >= 238d effective training

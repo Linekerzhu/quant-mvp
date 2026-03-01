@@ -185,9 +185,10 @@ class CombinatorialPurgedKFold:
                 seg_end = segments[seg_idx][1] - 1
                 seg_start_date = df.at[seg_start, date_col]
                 seg_end_date = df.at[seg_end, date_col]
-                # 该段的purge范围
+                # A5 Fix: Forward-only purge (AFML Ch7 标准)
+                # 只 purge test 之后的数据，不 purge test 之前的数据
                 test_ranges.append((
-                    seg_start_date - BDay(self.purge_window),
+                    seg_start_date,  # forward-only: 从 test 开始日期
                     seg_end_date + BDay(self.purge_window)
                 ))
             
@@ -282,8 +283,9 @@ class CombinatorialPurgedKFold:
                 seg_end = segments[seg_idx][1] - 1
                 seg_start_date = df.at[seg_start, date_col]
                 seg_end_date = df.at[seg_end, date_col]
+                # A5 Fix: Forward-only purge (AFML Ch7 标准)
                 test_ranges.append((
-                    seg_start_date - BDay(self.purge_window),
+                    seg_start_date,  # forward-only
                     seg_end_date + BDay(self.purge_window)
                 ))
             

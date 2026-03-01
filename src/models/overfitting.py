@@ -87,9 +87,11 @@ class OverfittingDetector:
         # 中位数排名
         median_rank = (n + 1) / 2
         
-        # 计算 PBO：best IS path 的 OOS 排名 > 中位数的概率
-        # 即：IS 最好的路径在 OOS 表现差于中位数的概率
-        pbo = np.mean(oos_ranks > median_rank)
+        # R15-N1 Fix: AFML 正确定义
+        # PBO = P(IS最优路径在OOS表现差于中位数)
+        # 即：IS rank #1 的路径，其 OOS 排名是否 > 中位数
+        best_is_idx = np.argmin(is_ranks)  # 找 IS 最好的路径
+        pbo = 1.0 if oos_ranks[best_is_idx] > median_rank else 0.0
         
         logger.info("pbo_afml_rank_method", {
             "n_paths": n,

@@ -7,6 +7,88 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v4.4] - 2026-03-01
+
+### 内审修复完成 + 外部审核整改 (R14-R18)
+
+**审计轮次**: R14-R18 + EXT-Q1/Q2/Q5 (2026-03-01)
+**审计官**: Internal Audit (赵连顺)
+**状态**: ✅ 已完成 - 165/165 测试通过
+
+### Fixed - 修复
+
+#### R14 内审修复 (Commit: `140c8d6`)
+- **A1 [HIGH]**: PBO 改用 AFML 排名方法 (Ch7 §7.4.2)
+  - PBO = P(best IS path 的 OOS 排名 > 中位数)
+- **A2 [MEDIUM]**: DSR 添加 skewness/kurtosis + 多重测试校正
+- **A4 [MEDIUM]**: BaseModel .loc→.iloc 冷启动修复
+- **A9 [LOW]**: Dummy sentinel per-fold 检查
+
+#### R14-A3 样本权重 (Commit: `1928b85`)
+- **A3 [HIGH]**: 样本权重 per-fold 重算
+- 添加 SampleWeightCalculator 实例
+- 在 _train_cpcv_fold 中对每个 fold 重算样本权重
+- 避免训练权重受到测试集结构影响
+
+#### R15 PBO 修正 (Commit: `2271bd7`)
+- **N1 [NORMAL]**: PBO 计算逻辑修正
+- 只检查 IS rank #1 的路径，而非所有路径
+
+#### 外部审核修复 (Commit: `8fd8db4`)
+- **EXT-Q2 [P0]**: FracDiff 全局预计算
+  - 在 train() 中全局计算 FracDiff，避免每 fold 损失数据
+- **EXT-Q1 [P0]**: Early Stopping 隔离 test set
+  - 从训练集尾部切 20% 作为 validation set
+  - test set 只用于最终评估，不参与 early stopping
+- **Q5 [P1]**: find_min_d 预检查样本量
+
+#### 剩余技术债 (Commit: `35dc287`)
+- **A5 [P1]**: Forward-only purge (AFML Ch7 标准)
+- **A6 [P1]**: FracDiff d 全局固定
+- **A8 [P2]**: Feature lookback >= purge (10→60)
+
+#### 回归修复 (2026-03-01)
+- **Q5-REG**: 修复 `fracdiff.py` UnboundLocalError
+  - 问题：函数内部重复定义 `MIN_ADF_SAMPLES` 导致局部变量冲突
+  - 修复：删除函数内重复定义，直接使用模块级常量
+
+### Changed - 修改
+- **config/training.yaml**: purge_window 10 → 60
+- **src/models/purged_kfold.py**: 实现 forward-only purge
+- **src/models/meta_trainer.py**: 添加 per-fold 权重重算
+- **src/models/overfitting.py**: PBO/DSR 算法修正
+
+### Documentation - 文档
+- **docs/audit/FIX_LOG.md**: 完整修复记录汇总
+- 更新审计历史表格
+- 添加修复流程规范
+
+---
+
+## [v4.3] - 2026-02-28
+
+### Phase C 完成 - Meta-Labeling MVP
+
+**状态**: ✅ Phase C 全部功能通过金融审计
+**测试**: 165/165 passing
+
+### Added - 新增
+- **Phase C 完整实现**:
+  - Base Models (SMA Cross + Momentum)
+  - CPCV (Combinatorial Purged K-Fold, 15 paths)
+  - FracDiff (Fractional Differentiation, d ≈ 0.4)
+  - Meta-Labeling Pipeline
+- **Deflated Sharpe Ratio**: z-score 实现
+- **PBO (Probability of Backtest Overfitting)**: AFML 标准实现
+- **技术债务拨备**: CAGR -3%, MDD +10%
+
+### Changed - 修改
+- **docs/PHASE_C_STATUS.md**: Phase C 完成状态报告
+- **src/models/**: 完整的 Meta-Labeling 实现
+- **tests/**: 165 个测试全部通过
+
+---
+
 ## [v4.2] - 2026-02-26
 
 ### OR5 审计裁决 - Phase C 架构重构
@@ -141,7 +223,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 | 轮次 | 日期 | 状态 | 主要发现 | 整改 |
 |------|------|------|----------|------|
-| OR5 | 2026-02-26 | ✅ 完成 | Meta-Labeling 强制、FracDiff、CPCV 手写、Burn-in 陷阱 | T1-T7 全部完成 |
+| Q5-REG | 2026-03-01 | ✅ 完成 | fracdiff.py 重复常量定义导致 UnboundLocalError | 已修复 |
+| R18 | 2026-03-01 | ✅ 完成 | P0 全部修复、P1 冗余特征、P2 稳定性 | 全部完成 |
+| R17 | 2026-03-01 | ✅ 完成 | 日历错配、噪声确定性、备份源闭环 | 全部完成 |
+| R16 | 2026-03-01 | ✅ 完成 | R15 回归修复、CPCV 配置修正 | 全部完成 |
+| R15 | 2026-03-01 | ✅ 完成 | PBO 计算逻辑修正 | N1 完成 |
+| R14 | 2026-03-01 | ✅ 完成 | PBO/DSR 算法、样本权重、BaseModel | A1-A9 全部完成 |
+| EXT-Q | 2026-03-01 | ✅ 完成 | FracDiff 预计算、Early Stopping 隔离 | Q1-Q5 全部完成 |
+| OR9-13 | 2026-02-28 | ✅ 完成 | 内审修复汇总 (P0-P2) | 全部完成 |
+| OR5 | 2026-02-26 | ✅ 完成 | Meta-Labeling 强制、FracDiff、CPCV 手写 | T1-T7 全部完成 |
 | OR4 | 2026-02-25 | ✅ 完成 | Phase A/B 安全审计 | 2×误报、1×属实（已修） |
 | OR3 | - | - | （跳过，合并至 OR4） | - |
 
@@ -149,8 +239,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## 版本规划
 
-- **v4.2** (当前): OR5 审计裁决，Phase C 准备就绪
-- **v4.3** (计划): Phase C 完成，Meta-Labeling + FracDiff + CPCV 全部实现
+- **v4.4** (当前): R14-R18 内审修复完成，外部审核整改完成，165测试通过
+- **v4.3** ✅: Phase C 完成，Meta-Labeling + FracDiff + CPCV 全部实现
 - **v5.0** (计划): Phase C+ 双模型集成
 - **v6.0** (计划): Phase D 风控系统
 - **v7.0** (计划): Phase E 模拟盘
@@ -158,4 +248,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-*Last updated: 2026-02-26*
+*Last updated: 2026-03-01*

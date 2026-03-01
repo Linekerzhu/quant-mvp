@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v4.6] - 2026-03-02
+
+### R22 深度审计修复 (Commit: `17189fb`)
+
+**审计轮次**: R22 (2026-03-02)
+**审计官**: Internal Audit (张德功)
+**状态**: ✅ 已完成 - 165/165 测试通过
+
+### Fixed - 修复
+
+#### R22-F1 [P2→Phase D]: 样本权重公式修正为AFML标准
+- **问题**: `1/(1+avg_concurrent)` 不等于 AFML 的 `mean(1/c(t))`
+- **修复**: 改为 `mean(1/c(t))` - average uniqueness
+- **文件**: `src/labels/sample_weights.py`
+- **影响**: 单独事件 weight=1.0 (was 0.5), 2重叠事件 weight=0.5 (was 0.33)
+
+### Changed - 修改
+- `sample_weights.py`: `_calculate_weights_sweep_line()` 使用 AFML Ch4 标准
+
+---
+
 ## [v4.5] - 2026-03-02
 
 ### R21 深度审计修复 (Commit: `a4c0f8f`)

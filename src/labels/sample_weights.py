@@ -65,8 +65,8 @@ class SampleWeightCalculator:
             logger.warn("no_valid_events_for_weights", {})
             return df
         
-        # Build intervals and calculate weights
-        weights = self._calculate_weights_interval_tree(valid_df)
+        # EXT2-Q4 Fix: 使用差分数组 (Sweep-line) 方法，O(N log N)
+        weights = self._calculate_weights_sweep_line(valid_df)
         
         # Assign weights back to dataframe
         # P2-C2: Use weights.index for alignment instead of valid_mask + .values
@@ -89,12 +89,111 @@ class SampleWeightCalculator:
         Algorithm:
         1. Group events by symbol
         2. For each symbol, build sorted list of intervals
-        3. For each event, query how many other symbols have overlapping intervals
+        3. For each event, query how many OTHER symbols have ANY event overlapping
         4. Use binary search for efficient range queries
         
         Complexity: O(n log n) where n = number of events
         """
-        weights = pd.Series(index=valid_df.index, dtype=float)
+        # 新方法：差分数组 (Sweep-line) - O(N log N)
+        # 核心思路：用 event counter 在时间线上的差分数组快速计算每日并发数
+        return self._calculate_weights_sweep_line(valid_df)
+    
+    def _calculate_weights_sweep_line(self, valid_df: pd.DataFrame) -> pd.Series:
+        """
+        EXT2-Q4 Fix: 使用差分数组 (Sweep-line) 方法实现 O(N log N) 样本权重计算。
+        
+        算法步骤：
+        1. 为每个事件计算 [entry_date, exit_date) 区间
+        2. 用差分数组在时间线上标记每日并发数变化
+        3. 累加得到每日并发数
+        4. 对每个事件，计算其持仓期间的平均并发数
+        5. weight = 1 / (1 + avg_concurrent_events)
+        
+        复杂度：O(N log N + N * D_avg) 其中 D_avg 是平均持仓天数
+        """
+        import bisect
+        
+        weights = pd.Series(1.0, index=valid_df.index)
+        
+        # Step 1: 构建事件区间
+        from pandas.tseries.offsets import BDay
+        
+        events = []
+        for idx, row in valid_df.iterrows():
+            symbol = row['symbol']
+            trigger_date = row['date']
+            entry_date = trigger_date + BDay(1)
+            
+            if 'label_exit_date' in row and pd.notna(row['label_exit_date']):
+                exit_date = row['label_exit_date']
+            else:
+                holding_days = int(row['label_holding_days'])
+                exit_date = trigger_date + BDay(holding_days)
+            
+            events.append({
+                'idx': idx,
+                'symbol': symbol,
+                'entry': entry_date,
+                'exit': exit_date
+            })
+        
+        if not events:
+            return weights
+        
+        # Step 2: 收集所有唯一日期并构建差分数组
+        all_dates_set = set()
+        for e in events:
+            # 使用 date_range 获取持仓期间的所有交易日
+            e_dates = pd.date_range(e['entry'], e['exit'], freq='B')
+            all_dates_set.update(e_dates)
+        
+        all_dates = sorted(all_dates_set)
+        date_to_pos = {d: i for i, d in enumerate(all_dates)}
+        
+        # 差分数组：+1 在 entry，-1 在 exit 之后
+        diff = np.zeros(len(all_dates) + 1)
+        
+        # Step 3: 用差分数组标记每个事件的起止
+        event_date_ranges = []
+        for e in events:
+            entry_pos = date_to_pos.get(e['entry'])
+            exit_pos = date_to_pos.get(e['exit'])
+            
+            if entry_pos is None or exit_pos is None:
+                event_date_ranges.append(None)
+                continue
+            
+            # 差分标记：entry +1，exit 后 -1
+            diff[entry_pos] += 1
+            if exit_pos + 1 < len(diff):
+                diff[exit_pos + 1] -= 1
+            
+            event_date_ranges.append((entry_pos, exit_pos))
+        
+        # Step 4: 累加得到每日并发数
+        daily_concurrent = np.cumsum(diff)
+        
+        # Step 5: 对每个事件计算平均并发数
+        for i, e in enumerate(events):
+            range_info = event_date_ranges[i]
+            if range_info is None:
+                continue
+            
+            entry_pos, exit_pos = range_info
+            # 计算持仓期间的日均并发数（排除 exit 当天）
+            if exit_pos > entry_pos:
+                concurrent_days = daily_concurrent[entry_pos:exit_pos]
+                avg_concurrent = concurrent_days.mean() if len(concurrent_days) > 0 else 0
+            else:
+                avg_concurrent = 0
+            
+            # 计算权重：1 / (1 + concurrent)
+            weight = 1.0 / (1.0 + avg_concurrent)
+            weights.loc[e['idx']] = weight
+        
+        return weights
+    
+    def _calculate_weights_interval_tree(self, valid_df: pd.DataFrame) -> pd.Series:
         
         # Build intervals: symbol -> list of (entry, exit, event_id)
         symbol_intervals = defaultdict(list)

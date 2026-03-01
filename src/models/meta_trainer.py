@@ -241,47 +241,16 @@ class MetaTrainer:
         Returns:
             Dictionary with training results
         """
-        # OR2-02 Fix: 集成 FracDiff 特征计算
-        from src.features.fracdiff import find_min_d_stationary, fracdiff_fixed_window
+        # EXT-Q2 Fix: FracDiff 已全局预计算，此处直接使用 features 参数
+        # features 已包含 'fracdiff' 列
         
-        # Step 1: 在训练集上找最优 d
-        fracdiff_config = self.config.get('fracdiff', {})
-        window = fracdiff_config.get('window', 100)
-        
-        try:
-            # MEDIUM-01 Fix: d在log(price)空间搜索，与应用空间一致
-            optimal_d = find_min_d_stationary(
-                np.log(train_df[price_col]),  # log space
-                threshold=0.05
-            )
-        except Exception as e:
-            logger.warn("find_min_d_failed", {"error": str(e)})
-            optimal_d = 0.5  # fallback to default
-        
-        logger.info("fracdiff_optimal_d", {"optimal_d": optimal_d})
-        
-        # Step 2: 计算 FracDiff 特征（train + test）
-        # OR2-02 Fix #2: 传Series不是.values
-        train_df = train_df.copy()
-        test_df = test_df.copy()
-        
-        train_df['fracdiff'] = fracdiff_fixed_window(
-            np.log(train_df[price_col]), optimal_d, window  # OR2-03: 使用log(price)
-        )
-        test_df['fracdiff'] = fracdiff_fixed_window(
-            np.log(test_df[price_col]), optimal_d, window  # OR2-03: 使用log(price)
-        )
-        
-        # Step 3: 添加到特征列表（只用fracdiff，不是fracdiff_5）
-        current_features = features + ['fracdiff']
-        
-        # Step 4: 去除 NaN（FracDiff burn-in period）
-        train_df = train_df.dropna(subset=['fracdiff'])
-        test_df = test_df.dropna(subset=['fracdiff'])
+        # 去除 NaN（全局 fracdiff 可能有少量 burn-in）
+        train_df = train_df.dropna(subset=features)
+        test_df = test_df.dropna(subset=features)
         
         # 确保有足够数据
         if len(train_df) < 50 or len(test_df) < 10:
-            logger.warn("insufficient_data_after_fracdiff", {
+            logger.warn("insufficient_data", {
                 "n_train": len(train_df),
                 "n_test": len(test_df)
             })
@@ -291,11 +260,25 @@ class MetaTrainer:
         except ImportError:
             raise ImportError("lightgbm is required for training")
         
-        # Prepare data - C-02 Fix: 使用 current_features 包含 fracdiff
-        X_train = train_df[current_features]
+        # Prepare data
+        X_train = train_df[features]
         y_train = train_df[target_col]
-        X_test = test_df[current_features]
+        X_test = test_df[features]
         y_test = test_df[target_col]
+        
+        # EXT-Q1 Fix: Early Stopping 隔离 - 从训练集尾部切 validation set
+        # 将训练集分为 inner_train (80%) 和 validation (20%)
+        n_train = len(X_train)
+        val_size = max(int(n_train * 0.2), 50)  # 至少50个样本
+        val_size = min(val_size, 200)  # 最多200个样本
+        
+        train_idx = np.arange(n_train - val_size)
+        val_idx = np.arange(n_train - val_size, n_train)
+        
+        X_train_inner = X_train.iloc[train_idx]
+        y_train_inner = y_train.iloc[train_idx]
+        X_val = X_train.iloc[val_idx]
+        y_val = y_train.iloc[val_idx]
         
         # R14-A3 Fix: Per-fold 样本权重重算
         if raw_events is not None and train_indices is not None:
@@ -348,30 +331,37 @@ class MetaTrainer:
             train_weights = self._calculate_sample_weights(train_df)
             test_weights = self._calculate_sample_weights(test_df)
         
+        # EXT-Q1 Fix: 使用 inner_train 进行训练，validation set 用于 early stopping
+        # test set 只用于最终评估（不参与 early stopping）
+        
+        # 计算 inner_train 的权重
+        train_inner_weights = train_weights[:-val_size] if len(train_weights) >= val_size else train_weights
+        val_weights = train_weights[-val_size:] if len(train_weights) >= val_size else np.ones(len(y_val))
+        
         # Create datasets with sample weights
         train_data = lgb.Dataset(
-            X_train, 
-            label=y_train,
-            weight=train_weights  # C-03: 传入样本权重
+            X_train_inner, 
+            label=y_train_inner,
+            weight=train_inner_weights
         )
         valid_data = lgb.Dataset(
-            X_test, 
-            label=y_test, 
+            X_val, 
+            label=y_val, 
             reference=train_data,
-            weight=test_weights  # C-03: 传入样本权重
+            weight=val_weights
         )
         
         # Log weight statistics
         logger.info("sample_weights_stats", {
-            "train_mean": float(np.mean(train_weights)),
-            "train_std": float(np.std(train_weights)),
-            "train_min": float(np.min(train_weights)),
-            "train_max": float(np.max(train_weights)),
-            "test_mean": float(np.mean(test_weights)),
-            "test_std": float(np.std(test_weights))
+            "train_mean": float(np.mean(train_inner_weights)),
+            "train_std": float(np.std(train_inner_weights)),
+            "train_min": float(np.min(train_inner_weights)),
+            "train_max": float(np.max(train_inner_weights)),
+            "val_mean": float(np.mean(val_weights)),
+            "val_std": float(np.std(val_weights))
         })
         
-        # Train model
+        # Train model with early stopping on validation set
         model = lgb.train(
             self.lgb_params,
             train_data,
@@ -381,7 +371,7 @@ class MetaTrainer:
             callbacks=[lgb.early_stopping(self.early_stopping_rounds, verbose=False)]
         )
         
-        # Predictions
+        # Predictions - 使用全量训练集的预测（因为 test set 不参与训练）
         y_pred_proba = model.predict(X_test, num_iteration=model.best_iteration)
         y_pred = (y_pred_proba > 0.5).astype(int)
         
@@ -415,7 +405,7 @@ class MetaTrainer:
             'feature_importance': importance,
             'n_train': len(train_df),
             'n_test': len(test_df),
-            'optimal_d': optimal_d,  # C-02: 返回最优d值
+            # EXT-Q2: optimal_d 现在在 train() 级别返回
             'is_auc': is_auc,  # OR2-01 Fix: 真实的IS AUC
             'oos_auc': oos_auc,  # OOS AUC
             'positive_ratio': float((y_test == 1).mean())  # HIGH-02: for DSR baseline
@@ -476,6 +466,35 @@ class MetaTrainer:
         logger.info(f"CPCV: {n_paths} paths, n_splits={cpcv.n_splits}, "
                    f"n_test_splits={cpcv.n_test_splits}")
         
+        # EXT-Q2 Fix: 全局 FracDiff 预计算（避免每 fold 损失数据）
+        # 在全局数据上计算一次最优 d 和 fracdiff
+        logger.info("Step 3.5: Computing global FracDiff...")
+        fracdiff_config = self.config.get('fracdiff', {})
+        window = fracdiff_config.get('window', 100)
+        
+        from src.features.fracdiff import find_min_d_stationary, fracdiff_fixed_window
+        
+        try:
+            # 在完整数据集上找最优 d
+            optimal_d = find_min_d_stationary(
+                np.log(df_meta[price_col]),
+                threshold=0.05
+            )
+        except Exception as e:
+            logger.warn("find_min_d_failed", {"error": str(e)})
+            optimal_d = 0.5
+        
+        logger.info("fracdiff_global_optimal_d", {"optimal_d": optimal_d})
+        
+        # 在完整数据集上计算 fracdiff
+        df_meta = df_meta.copy()
+        df_meta['fracdiff'] = fracdiff_fixed_window(
+            np.log(df_meta[price_col]), optimal_d, window
+        )
+        
+        # 添加到特征列表
+        features_with_fracdiff = features + ['fracdiff']
+        
         # R14-A3 Fix: 保存原始事件数据用于 per-fold 权重重算
         # 需要 label_holding_days, label_exit_date, date 等列
         event_cols = ['date', 'symbol', 'label_holding_days', 'label_exit_date', 'event_valid']
@@ -501,8 +520,9 @@ class MetaTrainer:
             test_df = df_meta.iloc[test_idx].copy()
             
             # R14-A3 Fix: 传递 raw_events 和 indices 进行 per-fold 权重重算
+            # EXT-Q2 Fix: 使用 features_with_fracdiff (已包含 fracdiff)
             result = self._train_cpcv_fold(
-                train_df, test_df, features,
+                train_df, test_df, features_with_fracdiff,
                 train_indices=train_idx, test_indices=test_idx,
                 raw_events=raw_events
             )
@@ -534,6 +554,7 @@ class MetaTrainer:
             'pbo': pbo,
             'pbo_status': pbo_message,
             'overfitting_check': overfitting_result,
+            'optimal_d': optimal_d,  # EXT-Q2: 全局最优 d
             'mean_auc': np.mean(aucs),
             'std_auc': np.std(aucs),
             'min_auc': np.min(aucs),

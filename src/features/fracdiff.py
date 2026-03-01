@@ -285,6 +285,13 @@ def find_min_d_stationary(
         # Even d=1 is not stationary or test failed, return 1.0
         return 1.0
     
+    # Q5 Fix: 预检查样本量，避免在每次迭代中重复检查
+    MIN_ADF_SAMPLES = 50
+    n_samples = len(series.dropna())
+    if n_samples < MIN_ADF_SAMPLES:
+        logger.warn(f"find_min_d: 样本量不足 {n_samples} < {MIN_ADF_SAMPLES}, 使用默认 d=0.5")
+        return 0.5
+    
     # Binary search
     d_min, d_max = d_range
     

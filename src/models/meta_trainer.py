@@ -24,7 +24,7 @@ import pandas as pd
 import yaml
 
 from src.ops.event_logger import get_logger
-from src.models.overfitting import OverfittingDetector, DataPenaltyApplier
+from src.models.overfitting import OverfittingDetector
 from src.models.label_converter import LabelConverter
 
 # Suppress LightGBM warnings
@@ -81,8 +81,7 @@ class MetaTrainer:
         self.label_converter = LabelConverter(
             self.config.get('label', {})
         )
-        self.data_penalty = DataPenaltyApplier()
-        
+
         # R14-A3 Fix: 添加 SampleWeightCalculator 用于 per-fold 权重重算
         from src.labels.sample_weights import SampleWeightCalculator
         self.weight_calculator = SampleWeightCalculator()
@@ -174,6 +173,9 @@ class MetaTrainer:
         """
         使用 Base Model 生成方向信号。
         
+        R19-F1 Fix: 返回完整数据，不在此处过滤 side!=0，
+        避免 SMA 等模型的 warm-up 数据被过早移除。
+        
         Args:
             df: DataFrame with at least [symbol, date, adj_close] columns
             base_model: Base model instance (e.g., BaseModelSMA, BaseModelMomentum)
@@ -190,15 +192,12 @@ class MetaTrainer:
         
         df_with_signals = pd.concat(results, ignore_index=True)
         
-        # 过滤 side != 0（只保留有明确信号的样本）
-        df_filtered = df_with_signals[df_with_signals['side'] != 0].copy()
-        
+        # R19-F1 Fix: 不过滤，返回完整数据
         n_total = len(df_with_signals)
-        n_filtered = len(df_filtered)
-        logger.info(f"Base signals: {n_total} samples, {n_filtered} after filtering side!=0 "
-                   f"({n_total - n_filtered} removed)")
+        n_side_zero = (df_with_signals['side'] == 0).sum()
+        logger.info(f"Base signals: {n_total} samples, {n_side_zero} with side=0 (warm-up)")
         
-        return df_filtered
+        return df_with_signals
     
     def _convert_to_meta_labels(self, df: pd.DataFrame) -> pd.DataFrame:
         """
@@ -419,18 +418,6 @@ class MetaTrainer:
             'positive_ratio': float((y_test == 1).mean())  # HIGH-02: for DSR baseline
         }
     
-    def apply_data_penalty(self, metrics: Dict[str, float]) -> Dict[str, float]:
-        """
-        应用数据技术债惩罚性拨备。
-        
-        Args:
-            metrics: Dictionary of performance metrics
-        
-        Returns:
-            Dictionary with adjusted metrics
-        """
-        return self.data_penalty.apply(metrics)
-    
     def train(
         self,
         df: pd.DataFrame,
@@ -466,6 +453,19 @@ class MetaTrainer:
         
         if len(df_meta) == 0:
             raise ValueError("No samples remaining after meta-label conversion")
+        
+        # Step 2.5: 过滤样本（在信号生成之后、训练之前）
+        # R19-F1 Fix: 延迟过滤，保留 warm-up 数据用于 FracDiff 计算
+        df_filtered = df_meta[df_meta['side'] != 0].copy()
+        if 'event_valid' in df_filtered.columns:
+            df_filtered = df_filtered[df_filtered['event_valid'] == True]
+        
+        logger.info(f"Filtered: {len(df_meta)} → {len(df_filtered)} samples")
+        
+        if len(df_filtered) < 100:
+            raise ValueError(f"Insufficient samples: {len(df_filtered)} < 100")
+        
+        df_meta = df_filtered
         
         # Step 3: Initialize CPCV
         logger.info("Step 3: Initializing CPCV...")

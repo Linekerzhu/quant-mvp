@@ -62,88 +62,98 @@ def test_e2e_sma_pipeline():
     print("🧪 E2E Test: SMA Base Model → Triple Barrier")
     print("="*60)
     
-    # Step 1: Create test data
-    df = create_test_data()
-    print(f"\n📊 Created test data: {len(df)} rows")
-    
-    # Step 2: Generate Base Model signals
-    model = BaseModelSMA(fast_window=20, slow_window=60)
-    df = model.generate_signals(df)
-    
-    print(f"\n📈 SMA Base Model signals generated:")
-    print(f"   - Total rows: {len(df)}")
-    print(f"   - side=0 (cold start): {(df['side'] == 0).sum()}")
-    print(f"   - side=1 (long): {(df['side'] == 1).sum()}")
-    print(f"   - side=-1 (short): {(df['side'] == -1).sum()}")
-    
-    # Validate signal values
-    unique_signals = set(df['side'].unique())
-    assert unique_signals.issubset({-1, 0, 1}), f"❌ Invalid signals: {unique_signals}"
-    print("   ✅ Signal values valid: {-1, 0, +1}")
-    
-    # Validate cold start
-    cold_start = df['side'].iloc[:60]
-    assert (cold_start == 0).all(), "❌ Cold start period should have side=0"
-    print("   ✅ Cold start correct: first 60 rows have side=0")
-    
-    # Step 3: Apply Triple Barrier
-    labeler = TripleBarrierLabeler()
-    df_labeled = labeler.label_events(df)
-    
-    print(f"\n🏷️ Triple Barrier labels generated:")
-    
-    # Check events only generated for side != 0
-    valid_events = df_labeled[df_labeled['event_valid'] == True]
-    
-    # Debug: Check rejection reasons
-    rejected = df_labeled[df_labeled['event_valid'] == False]
-    print(f"   - Total rows: {len(df_labeled)}")
-    print(f"   - Valid events: {len(valid_events)}")
-    print(f"   - Rejected rows: {len(rejected)}")
-    
-    # Check if side=0 rows are correctly excluded
-    side_zero_rows = df_labeled[df_labeled['side'] == 0]
-    side_nonzero_rows = df_labeled[df_labeled['side'] != 0]
-    print(f"   - Rows with side=0: {len(side_zero_rows)}")
-    print(f"   - Rows with side!=0: {len(side_nonzero_rows)}")
-    
-    # Verify side constraint - side=0 should not generate events
-    if len(valid_events) > 0:
-        zero_side_events = valid_events[valid_events['side'] == 0]
-        if len(zero_side_events) > 0:
-            print("   ❌ Triple Barrier generated events for side=0!")
-            return False
-        else:
-            print("   ✅ Triple Barrier only generates events for side != 0")
-    
-    # Check label values (should be -1, 0, 1 for standard labeling)
-    label_values = set(df_labeled['label'].dropna().unique())
-    print(f"   - Label values: {label_values}")
-    
-    # For Meta-Labeling, labels should be:
-    # 1 = profit barrier hit (base signal was correct)
-    # 0 = time barrier hit (neutral)
-    # -1 = loss barrier hit (base signal was wrong)
-    expected_labels = {-1, 0, 1}
-    assert label_values.issubset(expected_labels), f"❌ Invalid labels: {label_values}"
-    print(f"   ✅ Label values in {expected_labels}")
-    
-    # Step 4: Verify distribution
-    distribution = labeler.get_label_distribution(df_labeled)
-    print(f"\n📊 Label distribution:")
-    print(f"   - Total events: {distribution.get('total_events', 0)}")
-    
-    if 'by_label' in distribution:
-        print(f"   - Profit (label=1): {distribution['by_label']['profit']}")
-        print(f"   - Loss (label=-1): {distribution['by_label']['loss']}")
-        print(f"   - Neutral (label=0): {distribution['by_label']['neutral']}")
-        print(f"   - Mean return: {distribution.get('mean_return', 0):.4f}")
-        print(f"   - Mean holding days: {distribution.get('mean_holding_days', 0):.2f}")
-    elif 'error' in distribution:
-        print(f"   ⚠️ {distribution['error']}")
-    
-    print("\n✅ SMA E2E Test PASSED")
-    return True
+    try:
+        # Step 1: Create test data
+        df = create_test_data()
+        print(f"\n📊 Created test data: {len(df)} rows")
+        
+        # Step 2: Generate Base Model signals
+        model = BaseModelSMA(fast_window=20, slow_window=60)
+        df = model.generate_signals(df)
+        
+        print(f"\n📈 SMA Base Model signals generated:")
+        print(f"   - Total rows: {len(df)}")
+        print(f"   - side=0 (cold start): {(df['side'] == 0).sum()}")
+        print(f"   - side=1 (long): {(df['side'] == 1).sum()}")
+        print(f"   - side=-1 (short): {(df['side'] == -1).sum()}")
+        
+        # Validate signal values
+        unique_signals = set(df['side'].unique())
+        assert unique_signals.issubset({-1, 0, 1}), f"❌ Invalid signals: {unique_signals}"
+        print("   ✅ Signal values valid: {-1, 0, +1}")
+        
+        # Validate cold start
+        cold_start = df['side'].iloc[:60]
+        assert (cold_start == 0).all(), "❌ Cold start period should have side=0"
+        print("   ✅ Cold start correct: first 60 rows have side=0")
+        
+        # Step 3: Apply Triple Barrier
+        labeler = TripleBarrierLabeler()
+        df_labeled = labeler.label_events(df)
+        
+        print(f"\n🏷️ Triple Barrier labels generated:")
+        
+        # Check events only generated for side != 0
+        valid_events = df_labeled[df_labeled['event_valid'] == True]
+        
+        # Debug: Check rejection reasons
+        rejected = df_labeled[df_labeled['event_valid'] == False]
+        print(f"   - Total rows: {len(df_labeled)}")
+        print(f"   - Valid events: {len(valid_events)}")
+        print(f"   - Rejected rows: {len(rejected)}")
+        
+        # Check if side=0 rows are correctly excluded
+        side_zero_rows = df_labeled[df_labeled['side'] == 0]
+        side_nonzero_rows = df_labeled[df_labeled['side'] != 0]
+        print(f"   - Rows with side=0: {len(side_zero_rows)}")
+        print(f"   - Rows with side!=0: {len(side_nonzero_rows)}")
+        
+        # Verify side constraint - side=0 should not generate events
+        if len(valid_events) > 0:
+            zero_side_events = valid_events[valid_events['side'] == 0]
+            if len(zero_side_events) > 0:
+                print("   ❌ Triple Barrier generated events for side=0!")
+                return False
+            else:
+                print("   ✅ Triple Barrier only generates events for side != 0")
+        
+        # Check label values (should be -1, 0, 1 for standard labeling)
+        label_values = set(df_labeled['label'].dropna().unique())
+        print(f"   - Label values: {label_values}")
+        
+        # For Meta-Labeling, labels should be:
+        # 1 = profit barrier hit (base signal was correct)
+        # 0 = time barrier hit (neutral)
+        # -1 = loss barrier hit (base signal was wrong)
+        expected_labels = {-1, 0, 1}
+        assert label_values.issubset(expected_labels), f"❌ Invalid labels: {label_values}"
+        print(f"   ✅ Label values in {expected_labels}")
+        
+        # Step 4: Verify distribution
+        distribution = labeler.get_label_distribution(df_labeled)
+        print(f"\n📊 Label distribution:")
+        print(f"   - Total events: {distribution.get('total_events', 0)}")
+        
+        if 'by_label' in distribution:
+            print(f"   - Profit (label=1): {distribution['by_label']['profit']}")
+            print(f"   - Loss (label=-1): {distribution['by_label']['loss']}")
+            print(f"   - Neutral (label=0): {distribution['by_label']['neutral']}")
+            print(f"   - Mean return: {distribution.get('mean_return', 0):.4f}")
+            print(f"   - Mean holding days: {distribution.get('mean_holding_days', 0):.2f}")
+        elif 'error' in distribution:
+            print(f"   ⚠️ {distribution['error']}")
+        
+        print("\n✅ SMA E2E Test PASSED")
+        return True
+        
+    except AssertionError as e:
+        print(f"\n❌ SMA E2E Test FAILED: {e}")
+        return False
+    except Exception as e:
+        print(f"\n❌ SMA E2E Test ERROR: {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
 
 
 def test_e2e_momentum_pipeline():
@@ -152,57 +162,67 @@ def test_e2e_momentum_pipeline():
     print("🧪 E2E Test: Momentum Base Model → Triple Barrier")
     print("="*60)
     
-    # Step 1: Create test data
-    df = create_test_data()
-    print(f"\n📊 Created test data: {len(df)} rows")
-    
-    # Step 2: Generate Base Model signals
-    model = BaseModelMomentum(window=20)
-    df = model.generate_signals(df)
-    
-    print(f"\n📈 Momentum Base Model signals generated:")
-    print(f"   - Total rows: {len(df)}")
-    print(f"   - side=0 (cold start): {(df['side'] == 0).sum()}")
-    print(f"   - side=1 (long): {(df['side'] == 1).sum()}")
-    print(f"   - side=-1 (short): {(df['side'] == -1).sum()}")
-    
-    # Validate cold start
-    cold_start = df['side'].iloc[:20]
-    assert (cold_start == 0).all(), "❌ Cold start period should have side=0"
-    print("   ✅ Cold start correct: first 20 rows have side=0")
-    
-    # Step 3: Apply Triple Barrier
-    labeler = TripleBarrierLabeler()
-    df_labeled = labeler.label_events(df)
-    
-    valid_events = df_labeled[df_labeled['event_valid'] == True]
-    
-    print(f"\n🏷️ Triple Barrier labels generated:")
-    print(f"   - Valid events: {len(valid_events)}")
-    
-    # Verify side constraint - side=0 should not generate events
-    if len(valid_events) > 0:
-        zero_side_events = valid_events[valid_events['side'] == 0]
-        if len(zero_side_events) > 0:
-            print("   ❌ Triple Barrier generated events for side=0!")
-            return False
-        else:
-            print("   ✅ Triple Barrier only generates events for side != 0")
-    
-    # Step 4: Verify distribution
-    distribution = labeler.get_label_distribution(df_labeled)
-    print(f"\n📊 Label distribution:")
-    print(f"   - Total events: {distribution.get('total_events', 0)}")
-    
-    if 'by_label' in distribution:
-        print(f"   - Profit (label=1): {distribution['by_label']['profit']}")
-        print(f"   - Loss (label=-1): {distribution['by_label']['loss']}")
-        print(f"   - Neutral (label=0): {distribution['by_label']['neutral']}")
-    elif 'error' in distribution:
-        print(f"   ⚠️ {distribution['error']}")
-    
-    print("\n✅ Momentum E2E Test PASSED")
-    return True
+    try:
+        # Step 1: Create test data
+        df = create_test_data()
+        print(f"\n📊 Created test data: {len(df)} rows")
+        
+        # Step 2: Generate Base Model signals
+        model = BaseModelMomentum(window=20)
+        df = model.generate_signals(df)
+        
+        print(f"\n📈 Momentum Base Model signals generated:")
+        print(f"   - Total rows: {len(df)}")
+        print(f"   - side=0 (cold start): {(df['side'] == 0).sum()}")
+        print(f"   - side=1 (long): {(df['side'] == 1).sum()}")
+        print(f"   - side=-1 (short): {(df['side'] == -1).sum()}")
+        
+        # Validate cold start
+        cold_start = df['side'].iloc[:20]
+        assert (cold_start == 0).all(), "❌ Cold start period should have side=0"
+        print("   ✅ Cold start correct: first 20 rows have side=0")
+        
+        # Step 3: Apply Triple Barrier
+        labeler = TripleBarrierLabeler()
+        df_labeled = labeler.label_events(df)
+        
+        valid_events = df_labeled[df_labeled['event_valid'] == True]
+        
+        print(f"\n🏷️ Triple Barrier labels generated:")
+        print(f"   - Valid events: {len(valid_events)}")
+        
+        # Verify side constraint - side=0 should not generate events
+        if len(valid_events) > 0:
+            zero_side_events = valid_events[valid_events['side'] == 0]
+            if len(zero_side_events) > 0:
+                print("   ❌ Triple Barrier generated events for side=0!")
+                return False
+            else:
+                print("   ✅ Triple Barrier only generates events for side != 0")
+        
+        # Step 4: Verify distribution
+        distribution = labeler.get_label_distribution(df_labeled)
+        print(f"\n📊 Label distribution:")
+        print(f"   - Total events: {distribution.get('total_events', 0)}")
+        
+        if 'by_label' in distribution:
+            print(f"   - Profit (label=1): {distribution['by_label']['profit']}")
+            print(f"   - Loss (label=-1): {distribution['by_label']['loss']}")
+            print(f"   - Neutral (label=0): {distribution['by_label']['neutral']}")
+        elif 'error' in distribution:
+            print(f"   ⚠️ {distribution['error']}")
+        
+        print("\n✅ Momentum E2E Test PASSED")
+        return True
+        
+    except AssertionError as e:
+        print(f"\n❌ Momentum E2E Test FAILED: {e}")
+        return False
+    except Exception as e:
+        print(f"\n❌ Momentum E2E Test ERROR: {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
 
 
 def test_shift1_leakage_prevention():
@@ -211,43 +231,50 @@ def test_shift1_leakage_prevention():
     print("🧪 Test: shift(1) Leakage Prevention")
     print("="*60)
     
-    # Create data with extreme T-day move
-    np.random.seed(42)
-    n = 100
-    dates = pd.date_range("2024-01-01", periods=n, freq="B")
-    returns = np.random.randn(n) * 0.02
-    prices = 100 * np.exp(np.cumsum(returns))
-    
-    df_normal = pd.DataFrame({
-        'symbol': 'TEST',
-        'date': dates,
-        'adj_close': prices,
-    })
-    
-    # Create version with extreme last-day move
-    df_extreme = df_normal.copy()
-    df_extreme.loc[99, 'adj_close'] = 500  # Extreme move
-    
-    # Generate signals
-    model = BaseModelSMA(fast_window=20, slow_window=60)
-    result_normal = model.generate_signals(df_normal)
-    result_extreme = model.generate_signals(df_extreme)
-    
-    # Signals BEFORE the extreme day should be identical
-    # (because shift(1) means T-day signal only uses T-1 and earlier)
-    signals_before_normal = result_normal['side'].iloc[:99]
-    signals_before_extreme = result_extreme['side'].iloc[:99]
-    
-    match = (signals_before_normal == signals_before_extreme).all()
-    
-    if match:
-        print("   ✅ shift(1) correctly prevents leakage")
-        print("   ✅ Signals before T-day are identical with/without extreme move")
-    else:
-        print("   ❌ shift(1) NOT working - signals changed!")
+    try:
+        # Create data with extreme T-day move
+        np.random.seed(42)
+        n = 100
+        dates = pd.date_range("2024-01-01", periods=n, freq="B")
+        returns = np.random.randn(n) * 0.02
+        prices = 100 * np.exp(np.cumsum(returns))
+        
+        df_normal = pd.DataFrame({
+            'symbol': 'TEST',
+            'date': dates,
+            'adj_close': prices,
+        })
+        
+        # Create version with extreme last-day move
+        df_extreme = df_normal.copy()
+        df_extreme.loc[99, 'adj_close'] = 500  # Extreme move
+        
+        # Generate signals
+        model = BaseModelSMA(fast_window=20, slow_window=60)
+        result_normal = model.generate_signals(df_normal)
+        result_extreme = model.generate_signals(df_extreme)
+        
+        # Signals BEFORE the extreme day should be identical
+        # (because shift(1) means T-day signal only uses T-1 and earlier)
+        signals_before_normal = result_normal['side'].iloc[:99]
+        signals_before_extreme = result_extreme['side'].iloc[:99]
+        
+        match = (signals_before_normal == signals_before_extreme).all()
+        
+        if match:
+            print("   ✅ shift(1) correctly prevents leakage")
+            print("   ✅ Signals before T-day are identical with/without extreme move")
+        else:
+            print("   ❌ shift(1) NOT working - signals changed!")
+            return False
+        
+        return True
+        
+    except Exception as e:
+        print(f"\n❌ shift(1) Test ERROR: {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
         return False
-    
-    return True
 
 
 if __name__ == "__main__":

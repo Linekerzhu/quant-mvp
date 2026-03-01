@@ -98,7 +98,11 @@ class OverfittingDetector:
             correlation = 0.0
         
         # PBO = 1 - 相关性（低相关=高过拟合）
-        pbo = 1.0 - correlation
+        # R19-F2 Fix: 映射到[0,1]: (1-ρ)/2
+        # ρ=+1 → PBO=0 (完美相关，无过拟合)
+        # ρ=-1 → PBO=1 (完美负相关，完全过拟合)
+        # ρ=0 → PBO=0.5 (无相关)
+        pbo = (1.0 - correlation) / 2.0
         pbo = max(0.0, min(1.0, pbo))  # 夹紧到[0,1]
         
         logger.info("pbo_spearman", {

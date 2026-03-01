@@ -83,6 +83,10 @@ class MetaTrainer:
         )
         self.data_penalty = DataPenaltyApplier()
         
+        # R14-A3 Fix: 添加 SampleWeightCalculator 用于 per-fold 权重重算
+        from src.labels.sample_weights import SampleWeightCalculator
+        self.weight_calculator = SampleWeightCalculator()
+        
         logger.info(f"MetaTrainer initialized with config: {config_path}")
         logger.info(f"OR5 Hardened: max_depth={self.lgb_params.get('max_depth')}, "
                    f"num_leaves={self.lgb_params.get('num_leaves')}, "
@@ -214,10 +218,15 @@ class MetaTrainer:
         test_df: pd.DataFrame,
         features: List[str],
         target_col: str = 'meta_label',
-        price_col: str = 'adj_close'
+        price_col: str = 'adj_close',
+        train_indices: np.ndarray = None,
+        test_indices: np.ndarray = None,
+        raw_events: pd.DataFrame = None
     ) -> Dict[str, Any]:
         """
         训练单个 CPCV fold，包含 FracDiff 特征计算。
+        
+        R14-A3 Fix: 添加 per-fold 权重重算支持。
         
         Args:
             train_df: Training data
@@ -225,6 +234,9 @@ class MetaTrainer:
             features: Feature column names
             target_col: Target column name
             price_col: Price column name for FracDiff
+            train_indices: Original train indices for weight calculation
+            test_indices: Original test indices for weight calculation
+            raw_events: Raw event data with label_holding_days, etc.
         
         Returns:
             Dictionary with training results
@@ -285,9 +297,56 @@ class MetaTrainer:
         X_test = test_df[current_features]
         y_test = test_df[target_col]
         
-        # C-03 Fix: 计算样本权重
-        train_weights = self._calculate_sample_weights(train_df)
-        test_weights = self._calculate_sample_weights(test_df)
+        # R14-A3 Fix: Per-fold 样本权重重算
+        if raw_events is not None and train_indices is not None:
+            # 使用 SampleWeightCalculator 重新计算权重
+            try:
+                # 提取当前 fold 的原始事件
+                train_events = raw_events.iloc[train_indices].copy()
+                test_events = raw_events.iloc[test_indices].copy()
+                
+                # 只对有效事件计算权重
+                if 'event_valid' in train_events.columns:
+                    train_valid = train_events[train_events['event_valid'] == True]
+                    test_valid = test_events[test_events['event_valid'] == True]
+                else:
+                    train_valid = train_events
+                    test_valid = test_events
+                
+                # 计算 per-fold 权重
+                if len(train_valid) > 0 and 'label_holding_days' in train_valid.columns:
+                    train_weighted = self.weight_calculator.calculate_weights(train_valid)
+                    train_weights = train_df['sample_weight'].values.copy() if 'sample_weight' in train_df.columns else np.ones(len(train_df))
+                    # 将计算出的权重映射回 train_df
+                    if 'sample_weight' in train_weighted.columns:
+                        # 创建索引映射
+                        train_weighted_idx = train_weighted.index
+                        for i, idx in enumerate(train_df.index):
+                            if idx in train_weighted_idx:
+                                train_weights[i] = train_weighted.at[idx, 'sample_weight']
+                else:
+                    train_weights = self._calculate_sample_weights(train_df)
+                
+                if len(test_valid) > 0 and 'label_holding_days' in test_valid.columns:
+                    test_weighted = self.weight_calculator.calculate_weights(test_valid)
+                    test_weights = test_df['sample_weight'].values.copy() if 'sample_weight' in test_df.columns else np.ones(len(test_df))
+                    if 'sample_weight' in test_weighted.columns:
+                        test_weighted_idx = test_weighted.index
+                        for i, idx in enumerate(test_df.index):
+                            if idx in test_weighted_idx:
+                                test_weights[i] = test_weighted.at[idx, 'sample_weight']
+                else:
+                    test_weights = self._calculate_sample_weights(test_df)
+                    
+                logger.info("R14-A3: Per-fold weights recalculated")
+            except Exception as e:
+                logger.warn(f"R14-A3: Per-fold weight recalculation failed: {e}, using pre-computed")
+                train_weights = self._calculate_sample_weights(train_df)
+                test_weights = self._calculate_sample_weights(test_df)
+        else:
+            # Fallback to pre-computed weights
+            train_weights = self._calculate_sample_weights(train_df)
+            test_weights = self._calculate_sample_weights(test_df)
         
         # Create datasets with sample weights
         train_data = lgb.Dataset(
@@ -417,6 +476,17 @@ class MetaTrainer:
         logger.info(f"CPCV: {n_paths} paths, n_splits={cpcv.n_splits}, "
                    f"n_test_splits={cpcv.n_test_splits}")
         
+        # R14-A3 Fix: 保存原始事件数据用于 per-fold 权重重算
+        # 需要 label_holding_days, label_exit_date, date 等列
+        event_cols = ['date', 'symbol', 'label_holding_days', 'label_exit_date', 'event_valid']
+        available_event_cols = [c for c in event_cols if c in df_meta.columns]
+        if available_event_cols:
+            logger.info(f"R14-A3: 保存事件列用于 per-fold 权重重算: {available_event_cols}")
+            raw_events = df_meta[available_event_cols].copy()
+        else:
+            raw_events = None
+            logger.warn("R14-A3: 事件列不可见，将使用预计算权重")
+        
         # Step 4: CPCV Training Loop
         logger.info("Step 4: Training CPCV paths...")
         path_results = []
@@ -430,11 +500,12 @@ class MetaTrainer:
             train_df = df_meta.iloc[train_idx].copy()
             test_df = df_meta.iloc[test_idx].copy()
             
-            # OR2-02 Fix: 直接传原始features给fold，fold内部负责FracDiff计算
-            # 不要在此处构造fracdiff_5列名
-            
-            # Train this fold
-            result = self._train_cpcv_fold(train_df, test_df, features)  # 用原始features
+            # R14-A3 Fix: 传递 raw_events 和 indices 进行 per-fold 权重重算
+            result = self._train_cpcv_fold(
+                train_df, test_df, features,
+                train_indices=train_idx, test_indices=test_idx,
+                raw_events=raw_events
+            )
             result['path_idx'] = path_idx
             path_results.append(result)
         

@@ -54,18 +54,19 @@ class OverfittingDetector:
         AFML 排名方法 (Ch7 §7.4.2, Bailey et al. 2016):
         PBO = 实际过拟合路径数 / 总路径数
         
-        R19-F2 Fix: 从二值(0/1)改为概率
-        - 运行多次蒙特卡洛模拟
-        - 每次模拟随机打乱OOS排名
-        - 统计"IS最好但OOS差"的概率
+        R19-F2 Fix: 使用Spearman相关系数
+        - 计算IS和OOS的Spearman相关性
+        - 相关性低表示过拟合（IS好但OOS差）
+        - PBO = 1 - 相关性（相关性越低，PBO越高）
         
         Args:
             path_results: List of result dicts from each CPCV path
         
         Returns:
-            PBO value between 0 and 1 (概率)
+            PBO value between 0 and 1
         """
-        # R14-A1 Fix: 实现 AFML 排名方法
+        from scipy import stats
+        
         is_aucs = []
         oos_aucs = []
         
@@ -88,33 +89,22 @@ class OverfittingDetector:
             best_is_idx = np.argmin(is_ranks)
             return 1.0 if oos_ranks[best_is_idx] > median_rank else 0.0
         
-        # R19-F2 Fix: 蒙特卡洛模拟计算概率
-        # 模拟1000次，每次随机打乱OOS排名
-        n_simulations = 1000
-        overfit_count = 0
+        # R19-F2 Fix: Spearman相关法
+        # 相关性高 = IS和OOS排名一致 = 无过拟合
+        # 相关性低 = IS好但OOS差 = 过拟合
+        correlation, p_value = stats.spearmanr(is_aucs, oos_aucs)
         
-        for _ in range(n_simulations):
-            # 打乱OOS排名
-            shuffled_oos = np.array(oos_aucs)
-            np.random.shuffle(shuffled_oos)
-            
-            # IS排名
-            is_ranks = np.argsort(np.argsort(-np.array(is_aucs))) + 1
-            oos_ranks_sim = np.argsort(np.argsort(-shuffled_oos)) + 1
-            
-            median_rank = (n + 1) / 2
-            best_is_idx = np.argmin(is_ranks)
-            
-            # 如果打乱后IS最好的路径在OOS中仍然差，计为过拟合
-            if oos_ranks_sim[best_is_idx] > median_rank:
-                overfit_count += 1
+        if np.isnan(correlation):
+            correlation = 0.0
         
-        pbo = overfit_count / n_simulations
+        # PBO = 1 - 相关性（低相关=高过拟合）
+        pbo = 1.0 - correlation
+        pbo = max(0.0, min(1.0, pbo))  # 夹紧到[0,1]
         
-        logger.info("pbo_monte_carlo", {
+        logger.info("pbo_spearman", {
             "n_paths": n,
-            "n_simulations": n_simulations,
-            "overfit_count": overfit_count,
+            "spearman_correlation": correlation,
+            "p_value": p_value,
             "pbo": pbo
         })
         

@@ -182,10 +182,10 @@ class TestFeatureLayerLeakage:
         engineer = FeatureEngineer()
         result = engineer._calc_volatility_features_fast(sample_data.copy())
         
-        # Check ATR at index 10
-        idx = 10
+        # Check ATR at index 19 (R19-F8: window=20, min_periods=20, first valid at index 19)
+        idx = 19
         
-        # ATR should only use data up to index 10
+        # ATR should only use data up to index 19
         atr = result.iloc[idx]['atr_20']  # R7: updated to atr_20
         
         # ATR should be finite and based on historical data

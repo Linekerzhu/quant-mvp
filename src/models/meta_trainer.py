@@ -377,11 +377,11 @@ class MetaTrainer:
         # Metrics
         from sklearn.metrics import roc_auc_score, accuracy_score, log_loss
         
-        # OR2-01 Fix: 计算 IS (train) AUC 和 OOS (test) AUC
-        # 对训练集做预测得到 IS AUC
-        y_train_pred_proba = model.predict(X_train, num_iteration=model.best_iteration)
+        # R19-F5 Fix: IS AUC只在inner_train上计算，不含validation
+        # validation子集没有参与训练，用它算IS AUC不准确
+        y_train_pred_proba = model.predict(X_train_inner, num_iteration=model.best_iteration)
         try:
-            is_auc = roc_auc_score(y_train, y_train_pred_proba)
+            is_auc = roc_auc_score(y_train_inner, y_train_pred_proba)
         except:
             is_auc = 0.5  # fallback
         

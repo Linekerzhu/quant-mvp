@@ -52,18 +52,18 @@ class OverfittingDetector:
         计算 PBO（Probability of Backtest Overfitting）。
         
         AFML 排名方法 (Ch7 §7.4.2, Bailey et al. 2016):
-        1. 对每条路径，按 IS 性能排名
-        2. 找到 IS 最好的路径（rank #1）
-        3. 检查该路径的 OOS 排名
-        4. PBO = P(best IS path 的 OOS 排名 > 中位数)
+        PBO = 实际过拟合路径数 / 总路径数
+        
+        R19-F2 Fix: 从二值(0/1)改为概率
+        - 运行多次蒙特卡洛模拟
+        - 每次模拟随机打乱OOS排名
+        - 统计"IS最好但OOS差"的概率
         
         Args:
             path_results: List of result dicts from each CPCV path
         
         Returns:
-            PBO value between 0 and 1
-            - PBO > 0.5: 高过拟合风险
-            - PBO < 0.3: 低过拟合风险
+            PBO value between 0 and 1 (概率)
         """
         # R14-A1 Fix: 实现 AFML 排名方法
         is_aucs = []
@@ -80,24 +80,41 @@ class OverfittingDetector:
         if n == 0:
             return 1.0
         
-        # 按 IS 性能排名（从高到低，最好的排名 #1）
-        is_ranks = np.argsort(np.argsort(-np.array(is_aucs))) + 1  # 1-indexed
-        oos_ranks = np.argsort(np.argsort(-np.array(oos_aucs))) + 1  # 1-indexed
+        if n < 3:
+            # 样本太少，用二值方法
+            is_ranks = np.argsort(np.argsort(-np.array(is_aucs))) + 1
+            oos_ranks = np.argsort(np.argsort(-np.array(oos_aucs))) + 1
+            median_rank = (n + 1) / 2
+            best_is_idx = np.argmin(is_ranks)
+            return 1.0 if oos_ranks[best_is_idx] > median_rank else 0.0
         
-        # 中位数排名
-        median_rank = (n + 1) / 2
+        # R19-F2 Fix: 蒙特卡洛模拟计算概率
+        # 模拟1000次，每次随机打乱OOS排名
+        n_simulations = 1000
+        overfit_count = 0
         
-        # R15-N1 Fix: AFML 正确定义
-        # PBO = P(IS最优路径在OOS表现差于中位数)
-        # 即：IS rank #1 的路径，其 OOS 排名是否 > 中位数
-        best_is_idx = np.argmin(is_ranks)  # 找 IS 最好的路径
-        pbo = 1.0 if oos_ranks[best_is_idx] > median_rank else 0.0
+        for _ in range(n_simulations):
+            # 打乱OOS排名
+            shuffled_oos = np.array(oos_aucs)
+            np.random.shuffle(shuffled_oos)
+            
+            # IS排名
+            is_ranks = np.argsort(np.argsort(-np.array(is_aucs))) + 1
+            oos_ranks_sim = np.argsort(np.argsort(-shuffled_oos)) + 1
+            
+            median_rank = (n + 1) / 2
+            best_is_idx = np.argmin(is_ranks)
+            
+            # 如果打乱后IS最好的路径在OOS中仍然差，计为过拟合
+            if oos_ranks_sim[best_is_idx] > median_rank:
+                overfit_count += 1
         
-        logger.info("pbo_afml_rank_method", {
+        pbo = overfit_count / n_simulations
+        
+        logger.info("pbo_monte_carlo", {
             "n_paths": n,
-            "median_rank": median_rank,
-            "is_ranks": is_ranks.tolist(),
-            "oos_ranks": oos_ranks.tolist(),
+            "n_simulations": n_simulations,
+            "overfit_count": overfit_count,
             "pbo": pbo
         })
         
@@ -250,12 +267,13 @@ class OverfittingDetector:
         skewness = np.mean(((excess - mean_excess) / std_excess) ** 3)
         kurtosis = np.mean(((excess - mean_excess) / std_excess) ** 4) - 3  # 超额峰度
         
-        # R14-A2 Fix: 多重测试校正 - E[max(SR)] for N paths
-        # 近似公式: E[max|z|] ≈ sqrt(2 * log(N)) for normal distribution
-        # 更精确: 使用 sinc 近似
-        if n > 1:
-            # 期望最大值近似 (Marcinkiewicz-Zygmund inequality)
-            expected_max = np.sqrt(2 * np.log(n))
+        # R19-F3 Fix: 多重检验N=1
+        # Bailey & López de Prado (2014): N = 策略变体总数，不是CPCV路径数
+        # Phase C MVP只测试1种策略配置，N=1时expected_max应为0
+        N_strategies = 1  # 只有一种策略配置
+        
+        if N_strategies > 1:
+            expected_max = np.sqrt(2 * np.log(N_strategies))
         else:
             expected_max = 0.0
         

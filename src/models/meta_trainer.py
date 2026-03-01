@@ -621,12 +621,12 @@ class MetaTrainer:
         try:
             import lightgbm as lgb
             
-            # Prepare full training data
-            X_full = df_filtered[features_with_fracdiff]
-            y_full = df_filtered['meta_label']
+            # R24-F1 Fix: Use df_meta (contains fracdiff) instead of df_filtered
+            X_full = df_meta[features_with_fracdiff]
+            y_full = df_meta['meta_label']
             
             # Calculate sample weights on full data
-            full_weights = self._calculate_sample_weights(df_filtered)
+            full_weights = self._calculate_sample_weights(df_meta)
             
             # Train final model (no early stopping needed, use fixed iterations)
             # Use median best_iteration from CPCV paths as reference
@@ -653,7 +653,7 @@ class MetaTrainer:
             logger.warn(f"Failed to train final model: {e}")
             results['model'] = None
             results['feature_list'] = features_with_fracdiff
-            results['n_training_samples'] = len(df_filtered)
+            results['n_training_samples'] = len(df_meta)
         
         # Step 7: Aggregate results
         aucs = [r['auc'] for r in path_results]

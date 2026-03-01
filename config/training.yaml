@@ -351,3 +351,13 @@ futu:
   rate_limit:
     orders_per_second: 10
     quotes_per_second: 20
+
+# =============================================================================
+# FracDiff Configuration (D2 Fix)
+# =============================================================================
+# Fractional differentiation parameters for feature engineering
+# Used in meta_trainer.py for global FracDiff computation
+fracdiff:
+  window: 100                      # Weight truncation window
+  default_d: 0.5                  # Default d value if search fails
+  threshold: 0.05                 # ADF test p-value threshold for stationarity

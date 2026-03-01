@@ -34,7 +34,8 @@ class LabelConverter:
         """
         self.config = config
         self.strategy = config.get('strategy', 'binary_filtered')
-        self.mapping = config.get('mapping', {-1: 0, 1: 1})
+        # D3 Fix: 添加防御性映射，避免 label=0 静默丢失
+        self.mapping = config.get('mapping', {-1: 0, 0: 0, 1: 1})
         
         logger.info(f"LabelConverter initialized: strategy={self.strategy}")
     

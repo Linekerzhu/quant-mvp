@@ -84,10 +84,12 @@ class TestFracdiffFixedWindow:
             fracdiff_fixed_window(price_series, -0.5, 100)
     
     def test_d_0_returns_original(self, price_series):
-        """Test that d=0 returns original series (with NaN padding)."""
+        """Test that d=0 returns original series (short-circuit)."""
         result = fracdiff_fixed_window(price_series, 0.0, 100)
-        # First 99 should be NaN
-        assert result.isna().sum() == 99
+        # D1 Fix: OR8-BUG-08 短路返回，无 NaN
+        assert result.isna().sum() == 0
+        # 验证返回值等于原序列
+        pd.testing.assert_series_equal(result, price_series)
     
     def test_d_1_is_first_diff(self, price_series):
         """Test that d=1 is approximately first difference."""

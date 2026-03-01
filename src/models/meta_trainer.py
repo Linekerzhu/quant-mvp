@@ -614,7 +614,48 @@ class MetaTrainer:
             logger.error(f"Overfitting Gate BLOCKED: PBO={pbo_message}, DSR={overfitting_result.get('dsr_message', 'N/A')}")
             raise RuntimeError(f"Overfitting Gate BLOCKED: PBO={pbo_message}, DSR={overfitting_result.get('dsr_message', 'N/A')}")
         
-        # Step 6: Aggregate results
+        # R23-F1: Train final model on full data for inference
+        # Gate PASSED - train a final model using all data (no test split)
+        logger.info("Step 6: Training final model on full data for inference...")
+        
+        try:
+            import lightgbm as lgb
+            
+            # Prepare full training data
+            X_full = df_filtered[features_with_fracdiff]
+            y_full = df_filtered['meta_label']
+            
+            # Calculate sample weights on full data
+            full_weights = self._calculate_sample_weights(df_filtered)
+            
+            # Train final model (no early stopping needed, use fixed iterations)
+            # Use median best_iteration from CPCV paths as reference
+            best_iterations = [r.get('best_iteration', 50) for r in path_results if r.get('best_iteration', 0) > 1]
+            final_rounds = int(np.median(best_iterations)) if best_iterations else 50
+            final_rounds = max(final_rounds, 20)  # At least 20 rounds
+            
+            train_data = lgb.Dataset(X_full, label=y_full, weight=full_weights)
+            
+            final_model = lgb.train(
+                self.lgb_params,
+                train_data,
+                num_boost_round=final_rounds
+            )
+            
+            logger.info(f"Final model trained with {final_rounds} rounds on {len(X_full)} samples")
+            
+            # Add to results
+            results['model'] = final_model
+            results['feature_list'] = features_with_fracdiff
+            results['n_training_samples'] = len(X_full)
+            
+        except Exception as e:
+            logger.warn(f"Failed to train final model: {e}")
+            results['model'] = None
+            results['feature_list'] = features_with_fracdiff
+            results['n_training_samples'] = len(df_filtered)
+        
+        # Step 7: Aggregate results
         aucs = [r['auc'] for r in path_results]
         accuracies = [r['accuracy'] for r in path_results]
         

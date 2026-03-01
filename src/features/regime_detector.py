@@ -76,7 +76,7 @@ class RegimeDetector:
                 mask = df['symbol'] == symbol
                 log_returns = np.log(df.loc[mask, 'adj_close'] / 
                                     df.loc[mask, 'adj_close'].shift(1))
-                df.loc[mask, 'rv_20d'] = log_returns.rolling(20, min_periods=1).std() * np.sqrt(252)
+                df.loc[mask, 'rv_20d'] = log_returns.rolling(20, min_periods=20).std() * np.sqrt(252)
         
         # Discretize into regimes
         conditions = [
@@ -155,16 +155,16 @@ class RegimeDetector:
         df['tr'] = df[['tr1', 'tr2', 'tr3']].max(axis=1)
         
         # Smooth TR and DM
-        df['atr'] = df['tr'].rolling(window=window, min_periods=1).mean()
-        df['plus_di'] = 100 * df['plus_dm'].rolling(window=window, min_periods=1).mean() / df['atr']
-        df['minus_di'] = 100 * df['minus_dm'].rolling(window=window, min_periods=1).mean() / df['atr']
+        df['atr'] = df['tr'].rolling(window=window, min_periods=window).mean()
+        df['plus_di'] = 100 * df['plus_dm'].rolling(window=window, min_periods=window).mean() / df['atr']
+        df['minus_di'] = 100 * df['minus_dm'].rolling(window=window, min_periods=window).mean() / df['atr']
         
         # Calculate DX and ADX
         df['dx'] = 100 * np.abs(df['plus_di'] - df['minus_di']) / (df['plus_di'] + df['minus_di'])
         # P2-C1 (R21): Replace inf with NaN (not 0) for proper NaN propagation
         # inf occurs when plus_di + minus_di = 0 (flat price), which is an edge case
         df['dx'] = df['dx'].replace([np.inf, -np.inf], np.nan)
-        adx = df['dx'].rolling(window=window, min_periods=1).mean()
+        adx = df['dx'].rolling(window=window, min_periods=window).mean()
         
         # P2-3 Fix: Return NaN for initial values instead of filling with 20
         # This maintains consistency with Plan's NaN handling strategy

@@ -58,7 +58,7 @@ class CombinatorialPurgedKFold:
         n_splits: 6          # Split timeline into 6 segments
         n_test_splits: 2     # Select 2 segments for test each time
         purge_window: 10     # Days (= max_holding_days)
-        embargo_window: 40  # Days
+        embargo_window: 60  # Days
         min_data_days: 630   # Minimum training days required
     
     Combinations: C(6,2) = 15 CPCV paths
@@ -191,8 +191,15 @@ class CombinatorialPurgedKFold:
                     seg_end_date + BDay(self.purge_window)
                 ))
             
-            # Calculate embargo range (仍然用全局，因为是test之后的窗口)
-            embargo_end = test_max_date + BDay(self.embargo_window)
+            # BUG-02 Fix: embargo也改为逐段，与purge一致
+            embargo_ranges = []
+            for seg_idx in test_seg_indices:
+                seg_end = segments[seg_idx][1] - 1
+                seg_end_date = df.at[seg_end, date_col]
+                embargo_ranges.append((
+                    seg_end_date,
+                    seg_end_date + BDay(self.embargo_window)
+                ))
             
             # Build train set with purging and embargo
             train_indices = []
@@ -202,8 +209,14 @@ class CombinatorialPurgedKFold:
                 
                 row_date = df.at[idx, date_col]
                 
-                # Skip if within embargo period
-                if row_date <= embargo_end and row_date > test_max_date:
+                # BUG-02 Fix: 检查是否在任何test段的embargo范围内
+                should_embargo = False
+                for emb_start, emb_end in embargo_ranges:
+                    if row_date > emb_start and row_date <= emb_end:
+                        should_embargo = True
+                        break
+                
+                if should_embargo:
                     continue
                 
                 # BUG-01 Fix: 检查是否与任何test段的purge范围重叠

@@ -37,7 +37,7 @@ cpcv = CombinatorialPurgedKFold(
     n_splits=6,
     n_test_splits=2,
     purge_window=10,
-    embargo_window=40,
+    embargo_window=60,
     min_data_days=50,
     config_path="/nonexistent/config.yaml"
 )

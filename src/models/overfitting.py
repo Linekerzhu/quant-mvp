@@ -199,13 +199,6 @@ class OverfittingDetector:
             # HIGH-02 Fix: 从实际数据获取baseline
             baselines.append(r.get('positive_ratio', 0.5))
         
-        baselines = []
-        
-        for r in path_results:
-            metrics.append(r.get('accuracy', r.get('auc', 0.5)))
-            # HIGH-02 Fix: 从实际数据获取baseline
-            baselines.append(r.get('positive_ratio', 0.5))
-        
         # BUG-03 Fix: 使用per-path excess计算DSR
         # 计算每个path相对于自己baseline的excess
         excess = [metrics[i] - baselines[i] for i in range(len(metrics))]

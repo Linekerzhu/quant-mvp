@@ -299,8 +299,8 @@ class FeatureEngineer:
             
             # Price vs SMA z-score
             for window in [20, 60]:
-                sma = df.loc[mask, 'adj_close'].rolling(window=window, min_periods=1).mean()
-                std = df.loc[mask, 'adj_close'].rolling(window=window, min_periods=1).std()
+                sma = df.loc[mask, 'adj_close'].rolling(window=window, min_periods=window).mean()
+                std = df.loc[mask, 'adj_close'].rolling(window=window, min_periods=window).std()
                 df.loc[mask, f'price_vs_sma{window}_zscore'] = (
                     (df.loc[mask, 'adj_close'] - sma) / std.replace(0, np.nan)
                 )
@@ -361,8 +361,8 @@ class FeatureEngineer:
         Standard RSI uses Wilder's smoothing; we use SMA for simplicity.
         """
         delta = prices.diff()
-        gain = (delta.where(delta > 0, 0)).rolling(window=window, min_periods=1).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(window=window, min_periods=1).mean()
+        gain = (delta.where(delta > 0, 0)).rolling(window=window, min_periods=window).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=window, min_periods=window).mean()
         
         # FIX A1 (R13): Handle edge cases for RSI extremes
         # When loss=0 (all gains), RSI should be 100 (max strength)
@@ -396,7 +396,7 @@ class FeatureEngineer:
         low_close = np.abs(df['adj_low'] - df['adj_close'].shift(1))
         
         tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
-        atr = tr.rolling(window=window, min_periods=1).mean()
+        atr = tr.rolling(window=window, min_periods=window).mean()
         
         return atr
     
@@ -519,7 +519,7 @@ class FeatureEngineer:
         # Relative volume - P2 (R23): Use shift(1) to exclude current day from mean
         # Prevents self-reference that compresses extreme volume signals by 31%
         df['relative_volume_20d'] = df.groupby('symbol')['volume'].transform(
-            lambda x: x / x.shift(1).rolling(window=20, min_periods=1).mean()
+            lambda x: x / x.shift(1).rolling(window=20, min_periods=20).mean()
         )
         
         # P2 (R24-A2b): Deleted OBV calculation
@@ -533,10 +533,10 @@ class FeatureEngineer:
         # SMA z-scores
         for window in [20, 60]:
             sma = df.groupby('symbol')['adj_close'].transform(
-                lambda x: x.rolling(window=window, min_periods=1).mean()
+                lambda x: x.rolling(window=window, min_periods=window).mean()
             )
             std = df.groupby('symbol')['adj_close'].transform(
-                lambda x: x.rolling(window=window, min_periods=1).std()
+                lambda x: x.rolling(window=window, min_periods=window).std()
             )
             df[f'price_vs_sma{window}_zscore'] = (df['adj_close'] - sma) / std.replace(0, np.nan)
         

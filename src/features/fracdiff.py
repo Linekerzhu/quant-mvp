@@ -141,6 +141,10 @@ def fracdiff_fixed_window(
     if not 0 <= d <= 1:
         raise ValueError("d must be between 0 and 1 (inclusive)")
     
+    # OR8-BUG-08 Fix: d=0 时直接返回原序列，避免 burn 50% 数据
+    if d == 0:
+        return series.copy()
+    
     # 验证并处理 NaN
     series = _validate_series(series, allow_na)
     

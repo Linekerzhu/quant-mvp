@@ -46,7 +46,7 @@ lightgbm:
   # OR5 RED LINE PARAMETERS (locked)
   max_depth: 3  # LOCKED -严禁超过 3
   num_leaves: 7  # LOCKED - <= 2^3 - 1
-  min_data_in_leaf: 200  # LOCKED - 强制统计显著性
+  min_data_in_leaf: 100  # R20-F1 Fix: 200→100 (避免CPCV fold死模型)
   feature_fraction: 0.5  # LOCKED - 双重随机化，打破共线性
   bagging_fraction: 0.7  # LOCKED - 双重随机化
   bagging_freq: 5

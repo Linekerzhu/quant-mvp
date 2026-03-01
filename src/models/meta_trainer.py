@@ -474,37 +474,73 @@ class MetaTrainer:
         logger.info(f"CPCV: {n_paths} paths, n_splits={cpcv.n_splits}, "
                    f"n_test_splits={cpcv.n_test_splits}")
         
-        # EXT-Q2 Fix: 全局 FracDiff 预计算（避免每 fold 损失数据）
-        # 在全局数据上计算一次最优 d 和 fracdiff
-        logger.info("Step 3.5: Computing global FracDiff...")
+        # ============================================================
+        # FATAL-3 Fix: Per-symbol FracDiff 预计算
+        # ============================================================
+        # 修复: 跨symbol拼接导致滚动窗口吞噬不同标的价格
+        # 修复: side!=0过滤后时间轴稀疏破坏等间距假设
+        # 方案: 对每个symbol单独计算 optimal_d 和 fracdiff
+        # ============================================================
+        logger.info("Step 3.5: Computing per-symbol FracDiff...")
         fracdiff_config = self.config.get('fracdiff', {})
         window = fracdiff_config.get('window', 100)
-        
+        threshold = fracdiff_config.get('threshold', 0.05)
+        default_d = fracdiff_config.get('default_d', 0.5)
+
         from src.features.fracdiff import find_min_d_stationary, fracdiff_fixed_window
-        
-        try:
-            # 在完整数据集上找最优 d
-            optimal_d = find_min_d_stationary(
-                np.log(df_meta[price_col]),
-                threshold=0.05
-            )
-        except Exception as e:
-            logger.warn("find_min_d_failed", {"error": str(e)})
-            optimal_d = 0.5
-        
-        logger.info("fracdiff_global_optimal_d", {"optimal_d": optimal_d})
-        
-        # 在完整数据集上计算 fracdiff
+
         df_meta = df_meta.copy()
-        df_meta['fracdiff'] = fracdiff_fixed_window(
-            np.log(df_meta[price_col]), optimal_d, window
-        )
-        
-        # 添加到特征列表
+        df_meta['fracdiff'] = np.nan  # 初始化
+        per_symbol_d = {}
+
+        for symbol in df_meta['symbol'].unique():
+            sym_mask = df_meta['symbol'] == symbol
+            sym_prices = np.log(df_meta.loc[sym_mask, price_col])
+
+            if len(sym_prices) < window:
+                logger.warn("fracdiff_skip_symbol", {
+                    "symbol": symbol,
+                    "n_samples": len(sym_prices),
+                    "window": window,
+                    "reason": "insufficient samples for FracDiff"
+                })
+                df_meta.loc[sym_mask, 'fracdiff'] = 0.0
+                per_symbol_d[symbol] = 0.0
+                continue
+
+            # Per-symbol optimal d
+            try:
+                sym_d = find_min_d_stationary(sym_prices, threshold=threshold)
+            except Exception as e:
+                logger.warn("fracdiff_d_failed", {
+                    "symbol": symbol,
+                    "error": str(e)
+                })
+                sym_d = default_d
+
+            per_symbol_d[symbol] = sym_d
+
+            # Per-symbol fracdiff
+            sym_fd = fracdiff_fixed_window(sym_prices, sym_d, window)
+            df_meta.loc[sym_mask, 'fracdiff'] = sym_fd.values
+
+        logger.info("fracdiff_per_symbol_d", {
+            "per_symbol_d": per_symbol_d,
+            "n_symbols": len(per_symbol_d)
+        })
+
         features_with_fracdiff = features + ['fracdiff']
         
-        # R14-A3 Fix: 保存原始事件数据用于 per-fold 权重重算
-        # 需要 label_holding_days, label_exit_date, date 等列
+        # ============================================================
+        # FATAL-1 Fix: 全局按时间排序，对齐 CPCV 内部排序
+        # ============================================================
+        # cpcv.split() 内部会 sort_values('date').reset_index(drop=True)
+        # 返回的 indices 基于排序后的行号
+        # df_meta 必须与 cpcv 内部排序一致，否则 iloc 全部错乱
+        # ============================================================
+        df_meta = df_meta.sort_values('date').reset_index(drop=True)
+
+        # R14-A3 Fix: 排序后提取 raw_events (索引已对齐)
         event_cols = ['date', 'symbol', 'label_holding_days', 'label_exit_date', 'event_valid']
         available_event_cols = [c for c in event_cols if c in df_meta.columns]
         if available_event_cols:
@@ -562,7 +598,7 @@ class MetaTrainer:
             'pbo': pbo,
             'pbo_status': pbo_message,
             'overfitting_check': overfitting_result,
-            'optimal_d': optimal_d,  # EXT-Q2: 全局最优 d
+            'optimal_d': per_symbol_d,  # FATAL-3: per-symbol d values
             'mean_auc': np.mean(aucs),
             'std_auc': np.std(aucs),
             'min_auc': np.min(aucs),

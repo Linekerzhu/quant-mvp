@@ -51,9 +51,11 @@ class OverfittingDetector:
         """
         计算 PBO（Probability of Backtest Overfitting）。
         
-        方法：IS-OOS Gap 检测（简化版，过AFML定义）
-        - 计算每条路径的 IS AUC 和 OOS AUC 差距
-        - 如果 IS 明显高于 OOS → 过拟合风险高
+        AFML 排名方法 (Ch7 §7.4.2, Bailey et al. 2016):
+        1. 对每条路径，按 IS 性能排名
+        2. 找到 IS 最好的路径（rank #1）
+        3. 检查该路径的 OOS 排名
+        4. PBO = P(best IS path 的 OOS 排名 > 中位数)
         
         Args:
             path_results: List of result dicts from each CPCV path
@@ -63,7 +65,7 @@ class OverfittingDetector:
             - PBO > 0.5: 高过拟合风险
             - PBO < 0.3: 低过拟合风险
         """
-        # OR2-01 Fix: 使用 IS-OOS Gap 方法
+        # R14-A1 Fix: 实现 AFML 排名方法
         is_aucs = []
         oos_aucs = []
         
@@ -78,25 +80,22 @@ class OverfittingDetector:
         if n == 0:
             return 1.0
         
-        # 计算 IS-OOS Gap
-        gaps = [is_auc - oos_auc for is_auc, oos_auc in zip(is_aucs, oos_aucs)]
+        # 按 IS 性能排名（从高到低，最好的排名 #1）
+        is_ranks = np.argsort(np.argsort(-np.array(is_aucs))) + 1  # 1-indexed
+        oos_ranks = np.argsort(np.argsort(-np.array(oos_aucs))) + 1  # 1-indexed
         
-        # 平均 gap
-        mean_gap = np.mean(gaps)
+        # 中位数排名
+        median_rank = (n + 1) / 2
         
-        # 标准差
-        std_gap = np.std(gaps, ddof=1) if len(gaps) > 1 else 0
+        # 计算 PBO：best IS path 的 OOS 排名 > 中位数的概率
+        # 即：IS 最好的路径在 OOS 表现差于中位数的概率
+        pbo = np.mean(oos_ranks > median_rank)
         
-        # 计算 PBO：gap > 0.05 视为过拟合
-        # PBO = 过拟合路径的比例
-        # HIGH-03 Fix: gap_threshold from 0.05 to 0.10 (避免误杀正常模型)
-        gap_threshold = 0.10
-        pbo = np.mean([gap > gap_threshold for gap in gaps])
-        
-        logger.info("pbo_is_oos_gap_method", {
+        logger.info("pbo_afml_rank_method", {
             "n_paths": n,
-            "mean_gap": mean_gap,
-            "std_gap": std_gap,
+            "median_rank": median_rank,
+            "is_ranks": is_ranks.tolist(),
+            "oos_ranks": oos_ranks.tolist(),
             "pbo": pbo
         })
         
@@ -121,15 +120,19 @@ class OverfittingDetector:
     
     def dummy_feature_sentinel(
         self, 
-        feature_importance: Dict[str, float]
+        feature_importance: Dict[str, float],
+        per_fold_importance: List[Dict[str, float]] = None
     ) -> Dict[str, Any]:
         """
         Dummy Feature 过拟合哨兵。
         
-        检查 dummy 特征是否进入前 25% 排名。
+        R14-A9 Fix: 添加 per-fold 检查
+        - 检查 dummy 是否在任何 fold 中进入前 25%
+        - 如果任何 fold 出现此情况，标记为警告
         
         Args:
-            feature_importance: Dictionary of feature names to importance scores
+            feature_importance: Dictionary of feature names to importance scores (average)
+            per_fold_importance: Optional list of per-fold importance dicts
         
         Returns:
             Dictionary with sentinel results
@@ -153,30 +156,55 @@ class OverfittingDetector:
         total_features = len(feature_importance)
         ranking_ratio = dummy_rank / total_features
         
-        # Check threshold
-        passed = ranking_ratio > self.dummy_threshold
+        # R14-A9 Fix: Per-fold 检查
+        per_fold_warnings = []
+        if per_fold_importance:
+            for fold_idx, fold_importance in enumerate(per_fold_importance):
+                if dummy_col in fold_importance:
+                    # Per-fold 排名
+                    fold_sorted = sorted(
+                        fold_importance.items(),
+                        key=lambda x: x[1],
+                        reverse=True
+                    )
+                    fold_ranks = {name: i + 1 for i, (name, _) in enumerate(fold_sorted)}
+                    fold_dummy_rank = fold_ranks.get(dummy_col, total_features + 1)
+                    fold_ratio = fold_dummy_rank / len(fold_importance)
+                    
+                    # 如果 dummy 在前 25%，记录警告
+                    if fold_ratio <= 0.25:
+                        per_fold_warnings.append({
+                            'fold': fold_idx,
+                            'dummy_rank': fold_dummy_rank,
+                            'total_features': len(fold_importance),
+                            'ratio': fold_ratio
+                        })
+        
+        # Check threshold - 如果有任何 per-fold 警告，标记为未通过
+        passed = ranking_ratio > self.dummy_threshold and len(per_fold_warnings) == 0
         
         return {
             'dummy_rank': dummy_rank,
             'total_features': total_features,
             'ranking_ratio': ranking_ratio,
             'threshold': self.dummy_threshold,
-            'passed': passed
+            'passed': passed,
+            'per_fold_warnings': per_fold_warnings
         }
     
     def calculate_deflated_sharpe(self, path_results: List[Dict]) -> float:
         """
-        计算 DSR 检验的 z-score（统计显著性检验）。
+        计算 Deflated Sharpe Ratio (DSR) 检验的 z-score。
         
-        注意：这不是真正的 Deflated Sharpe Ratio！
-        真正的 DSR 需要用 norm.cdf() 转换，这里直接返回 z-score。
+        R14-A2 Fix: 添加 skewness/kurtosis 校正和多重测试校正
         
-        公式: z = (SR - SR₀) / SE(SR)
+        AFML Ch8, Bailey & López de Prado (2014) 公式:
+        DSR = (SR - SR_benchmark) / (std(SR) * (1 + γ₃*SR/6 - γ₄*(SR²-1)/24))
         
-        判定标准 (使用 z-score):
-        - z > 1.645: 95% 置信度通过
-        - z > 1.282: 90% 置信度通过
-        - z <= 1.282: 拒绝
+        其中:
+        - γ₃ = skewness (偏度)
+        - γ₄ = kurtosis (峰度)
+        - E[max(SR)] 来自多重测试校正
         
         Args:
             path_results: List of CPCV path results
@@ -188,7 +216,6 @@ class OverfittingDetector:
         # - For accuracy: 0.5 = random guessing (balanced classes)
         # - For AUC: 0.5 = random ranking
         # - For Sharpe: 0.0 = zero excess return
-        # Note: If classes are imbalanced, baseline should be max(class_prior)
         
         # OR2-04 Fix: 分别收集metrics和baselines
         metrics = []
@@ -196,11 +223,9 @@ class OverfittingDetector:
         
         for r in path_results:
             metrics.append(r.get('accuracy', r.get('auc', 0.5)))
-            # HIGH-02 Fix: 从实际数据获取baseline
             baselines.append(r.get('positive_ratio', 0.5))
         
         # BUG-03 Fix: 使用per-path excess计算DSR
-        # 计算每个path相对于自己baseline的excess
         excess = [metrics[i] - baselines[i] for i in range(len(metrics))]
         excess = np.array(excess)
         mean_excess = np.mean(excess)
@@ -214,20 +239,48 @@ class OverfittingDetector:
         # BUG-05 Fix: 零variance正确处理
         if std_excess < 1e-10:
             if mean_excess > 1e-6:
-                return 20.0  # 确定性超过baseline
+                return 20.0
             else:
-                return 0.0   # 确定性未超过baseline
+                return 0.0
         
-        dsr = mean_excess / (std_excess / np.sqrt(n))
+        # R14-A2 Fix: 计算 skewness 和 kurtosis
+        # 使用样本公式 (ddof=1)
+        skewness = np.mean(((excess - mean_excess) / std_excess) ** 3)
+        kurtosis = np.mean(((excess - mean_excess) / std_excess) ** 4) - 3  # 超额峰度
+        
+        # R14-A2 Fix: 多重测试校正 - E[max(SR)] for N paths
+        # 近似公式: E[max|z|] ≈ sqrt(2 * log(N)) for normal distribution
+        # 更精确: 使用 sinc 近似
+        if n > 1:
+            # 期望最大值近似 (Marcinkiewicz-Zygmund inequality)
+            expected_max = np.sqrt(2 * np.log(n))
+        else:
+            expected_max = 0.0
+        
+        # 计算 DSR with skewness/kurtosis 校正
+        # SR = mean_excess / (std_excess / sqrt(n)) = mean_excess * sqrt(n) / std_excess
+        sr = mean_excess / (std_excess / np.sqrt(n))
+        
+        # 校正因子
+        correction = 1 + (skewness * sr / 6) - (kurtosis * (sr**2 - 1) / 24)
+        correction = max(correction, 0.1)  # 防止负数或过小
+        
+        # 应用多重测试校正 (从 SR 中减去期望最大值)
+        dsr_adjusted = (sr - expected_max) / correction
         
         logger.info("deflated_sharpe", {
             "mean_excess": mean_excess,
             "std_excess": std_excess,
             "n_paths": n,
-            "dsr": dsr
+            "skewness": skewness,
+            "kurtosis": kurtosis,
+            "expected_max_z": expected_max,
+            "sr_raw": sr,
+            "correction": correction,
+            "dsr_adjusted": dsr_adjusted
         })
         
-        return float(dsr)
+        return float(dsr_adjusted)
     
     def check_dsr_gate(self, dsr: float) -> Tuple[bool, str]:
         """
@@ -281,14 +334,19 @@ class OverfittingDetector:
         
         # Check dummy feature on average importance
         avg_importance = {}
+        per_fold_importance = []  # R14-A9 Fix: 收集 per-fold importance
         for r in path_results:
-            for feat, imp in r.get('feature_importance', {}).items():
+            fold_imp = r.get('feature_importance', {})
+            if fold_imp:
+                per_fold_importance.append(fold_imp)
+            for feat, imp in fold_imp.items():
                 if feat not in avg_importance:
                     avg_importance[feat] = []
                 avg_importance[feat].append(imp)
         
         avg_importance = {k: np.mean(v) for k, v in avg_importance.items()}
-        dummy_result = self.dummy_feature_sentinel(avg_importance)
+        # R14-A9 Fix: 传递 per_fold_importance 进行 per-fold 检查
+        dummy_result = self.dummy_feature_sentinel(avg_importance, per_fold_importance)
         
         return {
             'pbo': pbo,

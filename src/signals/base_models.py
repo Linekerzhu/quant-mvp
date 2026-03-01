@@ -74,8 +74,9 @@ class BaseModelSMA(BaseSignalGenerator):
         # Generate signals: +1 for bullish, -1 for bearish
         result['side'] = np.where(sma_fast > sma_slow, 1, -1)
         
-        # Cold start: first slow_window days have insufficient data
-        result.loc[:self.slow_window - 1, 'side'] = 0
+        # R14-A4 Fix: Cold start - use position-based indexing instead of label-based
+        # .iloc[:self.slow_window] selects first slow_window positions regardless of index
+        result.iloc[:self.slow_window, result.columns.get_loc('side')] = 0
         
         # Ensure integer type
         result['side'] = result['side'].astype(int)
@@ -177,8 +178,8 @@ class BaseModelMomentum(BaseSignalGenerator):
         # Generate signals: +1 for positive momentum, -1 for negative
         result['side'] = np.where(returns_nd > 0, 1, -1)
         
-        # Cold start: first window days have insufficient data
-        result.loc[:self.window - 1, 'side'] = 0
+        # R14-A4 Fix: Cold start - use position-based indexing instead of label-based
+        result.iloc[:self.window, result.columns.get_loc('side')] = 0
         
         # Also set side=0 where returns are NaN (no valid signal)
         result.loc[returns_nd.isna(), 'side'] = 0

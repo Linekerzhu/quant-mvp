@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v4.5] - 2026-03-02
+
+### R21 深度审计修复 (Commit: `a4c0f8f`)
+
+**审计轮次**: R21 (2026-03-02)
+**审计官**: Internal Audit (张德功)
+**状态**: ✅ 已完成 - 165/165 测试通过
+
+### Fixed - 修复
+
+#### R20 [HIGH]: min_data_in_leaf 修复 (Commit: `f64fd2a`)
+- **问题**: min_data_in_leaf=200过大，导致15/15 CPCV paths全部死模型
+- **修复**: min_data_in_leaf从200降至100
+- **结果**: 存活路径从0/15提升至10/15
+
+#### R21-F1 [P2]: 死路径检测
+- **问题**: 5/15 CPCV paths因bagging有效样本≈280，对min_data_in_leaf=100仍边缘，导致死模型
+- **修复**: 在Gate检查前添加dead_ratio检测，>0.5时抛出F8错误
+- **文件**: `src/models/meta_trainer.py`
+
+#### R21-F2 [P1→Phase D]: DSR Majority-Class Baseline
+- **问题**: DSR baseline=positive_ratio，当pos_ratio<0.5时可被trivial模型骗过
+- **修复**: baseline改为max(pos_ratio, 1-pos_ratio)
+- **文件**: `src/models/overfitting.py`
+
+### Changed - 修改
+- `meta_trainer.py`: 添加死路径检测逻辑
+- `overfitting.py`: DSR baseline计算逻辑
+- `check_overfitting()`返回值添加`dead_path_count`和`dead_path_ratio`
+
+---
+
 ## [v4.4] - 2026-03-01
 
 ### 内审修复完成 + 外部审核整改 (R14-R18)

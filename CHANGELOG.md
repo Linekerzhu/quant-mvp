@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v4.8] - 2026-03-02
+
+### R24 P0修复 (Commit: `e91192c`)
+
+**审计轮次**: R24 (2026-03-02)
+**审计官**: Internal Audit (张德功)
+**状态**: ✅ 已完成 - 165/165 测试通过
+
+### Fixed - 修复
+
+#### R24-F1 [P0]: df_filtered变量引用修复
+- **问题**: R23-F1使用df_filtered可能缺少fracdiff列，Gate PASS时KeyError
+- **修复**: 3处 df_filtered → df_meta
+- **文件**: `src/models/meta_trainer.py`
+
+---
+
 ## [v4.7] - 2026-03-02
 
 ### R23 深度审计修复 (Commit: `d5ed748`)

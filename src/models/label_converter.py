@@ -54,9 +54,14 @@ class LabelConverter:
             DataFrame with added 'meta_label' column (0 or 1)
         """
         if self.strategy == 'binary_filtered':
+            # H2 Fix: Time Barrier 过滤监控
+            total_events = len(df)
+            
             # Filter out label=0 (time barriers)
             # BUG-03 Fix: 先过滤NaN，再过滤label=0
-            df = df[df['label'].notna() & (df['label'] != 0)].copy()
+            df_filtered = df[df['label'].notna() & (df['label'] != 0)].copy()
+            filtered_count = total_events - len(df_filtered)
+            df = df_filtered
 
             # ============================================================
             # FATAL-2 Fix: Meta-Label = "Base Model方向是否正确"
@@ -78,6 +83,15 @@ class LabelConverter:
             logger.info(f"Meta-labels: {len(df)} samples, "
                        f"positive={(df['meta_label']==1).sum()}, "
                        f"negative={(df['meta_label']==0).sum()}")
+            
+            # H2 Fix: Time Barrier 过滤监控
+            logger.info("time_barrier_stats", {
+                "total_events": total_events,
+                "time_barrier_filtered": filtered_count,
+                "filter_ratio": filtered_count / total_events if total_events > 0 else 0,
+                "positive_after": int((df['meta_label'] == 1).sum()),
+                "negative_after": int((df['meta_label'] == 0).sum())
+            })
         else:
             raise ValueError(f"Unknown label strategy: {self.strategy}")
         

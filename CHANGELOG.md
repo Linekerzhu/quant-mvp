@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v4.9] - 2026-03-02
+
+### 工程修正指南 (Commit: `2d5dda3`)
+
+**来源**: 内部审计 R19-R24 + 外部专家评审
+**状态**: ✅ 已完成 - 165/165 测试通过
+
+### Fixed - 修复
+
+#### FIX-2 [P1]: Triple Barrier引入side参数
+- **问题**: barrier未引入side，做空策略盈亏比倒置
+- **修复**: 添加side参数，barrier位置根据side翻转
+- **文件**: `src/labels/triple_barrier.py`
+
+#### FIX-3 [P2]: FracDiff移至side过滤之前
+- **问题**: 在稀疏序列上计算fracdiff破坏等间距假设
+- **修复**: 在Step 2.3全量数据上计算
+- **文件**: `src/models/meta_trainer.py`
+
+#### FIX-4 [P2]: Inner-Train/Validation Purge Buffer
+- **问题**: inner_train与val边界存在持有期重叠
+- **修复**: 添加max_holding_days的buffer
+- **文件**: `src/models/meta_trainer.py`
+
+#### FIX-5 [P2]: Purge缺失列强制报错
+- **问题**: exit_date_col缺失时purge静默跳过
+- **修复**: split()开头强制检查
+- **文件**: `src/models/purged_kfold.py`
+
+#### FIX-7/8/9 [P3]: 小项修复
+- **FIX-7**: val_size上下限保护
+- **FIX-8**: LightGBM固定seed
+- **FIX-9**: _combinations改用math.comb
+
+---
+
 ## [v4.8] - 2026-03-02
 
 ### R24 P0修复 (Commit: `e91192c`)

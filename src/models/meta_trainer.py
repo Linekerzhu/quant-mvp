@@ -64,6 +64,12 @@ class MetaTrainer:
         # LightGBM parameters
         self.lgb_params = self.config.get('lightgbm', {}).copy()
         
+        # FIX-8: Set fixed seeds for reproducibility
+        lgb_seed = self.lgb_params.get('seed', 42)
+        self.lgb_params['seed'] = lgb_seed
+        self.lgb_params['bagging_seed'] = lgb_seed
+        self.lgb_params['feature_fraction_seed'] = lgb_seed
+        
         # OR5-CODE T5: Extract callback parameters
         self.n_estimators = self.lgb_params.pop('n_estimators', 500)
         self.early_stopping_rounds = self.lgb_params.pop('early_stopping_rounds', 50)
@@ -268,11 +274,26 @@ class MetaTrainer:
         # EXT-Q1 Fix: Early Stopping 隔离 - 从训练集尾部切 validation set
         # 将训练集分为 inner_train (80%) 和 validation (20%)
         n_train = len(X_train)
-        val_size = max(int(n_train * 0.2), 50)  # 至少50个样本
-        val_size = min(val_size, 200)  # 最多200个样本
+        # FIX-7: More flexible val_size bounds
+        val_size = max(int(n_train * 0.2), 10)  # At least 10 samples
+        val_size = min(val_size, 200, int(n_train * 0.5))  # Max 200 or 50% of n_train
         
-        train_idx = np.arange(n_train - val_size)
-        val_idx = np.arange(n_train - val_size, n_train)
+        # FIX-4: Add purge buffer between inner_train and validation
+        # Prevents holding period overlap from leaking into early stopping
+        purge_buffer = self.config.get('triple_barrier', self.config.get('label', {})).get('max_holding_days', 10)
+        
+        val_start = n_train - val_size
+        inner_end = max(val_start - purge_buffer, 0)
+        
+        # Safety check: inner_train must have at least 2x min_data_in_leaf
+        min_inner = self.config.get('lightgbm', {}).get('min_data_in_leaf', 100) * 2
+        if inner_end < min_inner:
+            logger.warn(f"FIX-4: purge buffer would leave inner_train={inner_end} < {min_inner}, "
+                       f"falling back to no buffer")
+            inner_end = val_start
+        
+        train_idx = np.arange(inner_end)
+        val_idx = np.arange(val_start, n_train)
         
         X_train_inner = X_train.iloc[train_idx]
         y_train_inner = y_train.iloc[train_idx]
@@ -333,9 +354,9 @@ class MetaTrainer:
         # EXT-Q1 Fix: 使用 inner_train 进行训练，validation set 用于 early stopping
         # test set 只用于最终评估（不参与 early stopping）
         
-        # 计算 inner_train 的权重
-        train_inner_weights = train_weights[:-val_size] if len(train_weights) >= val_size else train_weights
-        val_weights = train_weights[-val_size:] if len(train_weights) >= val_size else np.ones(len(y_val))
+        # FIX-4: Align weight slicing with purge buffer
+        train_inner_weights = train_weights[:inner_end] if len(train_weights) >= inner_end else train_weights
+        val_weights = train_weights[val_start:] if len(train_weights) >= val_start else np.ones(len(y_val))
         
         # Create datasets with sample weights
         train_data = lgb.Dataset(
@@ -454,8 +475,59 @@ class MetaTrainer:
         if len(df_meta) == 0:
             raise ValueError("No samples remaining after meta-label conversion")
         
+        # ============================================================
+        # FIX-3: Per-symbol FracDiff 在全量连续序列上预计算
+        # 必须在 side!=0 过滤之前, 保证时间序列等距
+        # ============================================================
+        logger.info("Step 2.3: Computing per-symbol FracDiff (on full continuous data)...")
+        fracdiff_config = self.config.get('fracdiff', {})
+        window = fracdiff_config.get('window', 100)
+        threshold = fracdiff_config.get('threshold', 0.05)
+        default_d = fracdiff_config.get('default_d', 0.5)
+
+        from src.features.fracdiff import find_min_d_stationary, fracdiff_fixed_window
+
+        df_meta = df_meta.copy()
+        df_meta['fracdiff'] = np.nan
+        per_symbol_d = {}
+
+        for symbol in df_meta['symbol'].unique():
+            sym_mask = df_meta['symbol'] == symbol
+            sym_prices = np.log(df_meta.loc[sym_mask, price_col])
+
+            if len(sym_prices) < window:
+                logger.warn("fracdiff_skip_symbol", {
+                    "symbol": symbol,
+                    "n_samples": len(sym_prices),
+                    "window": window,
+                    "reason": "insufficient samples for FracDiff"
+                })
+                df_meta.loc[sym_mask, 'fracdiff'] = 0.0
+                per_symbol_d[symbol] = 0.0
+                continue
+
+            try:
+                sym_d = find_min_d_stationary(sym_prices, threshold=threshold)
+            except Exception as e:
+                logger.warn("fracdiff_d_failed", {
+                    "symbol": symbol,
+                    "error": str(e)
+                })
+                sym_d = default_d
+
+            per_symbol_d[symbol] = sym_d
+            sym_fd = fracdiff_fixed_window(sym_prices, sym_d, window)
+            df_meta.loc[sym_mask, 'fracdiff'] = sym_fd.values
+
+        logger.info("fracdiff_per_symbol_d", {
+            "per_symbol_d": per_symbol_d,
+            "n_symbols": len(per_symbol_d)
+        })
+
+        features_with_fracdiff = features + ['fracdiff']
+        
         # Step 2.5: 过滤样本（在信号生成之后、训练之前）
-        # R19-F1 Fix: 延迟过滤，保留 warm-up 数据用于 FracDiff 计算
+        # FIX-3: fracdiff 已在全量数据上正确计算，过滤后会正确携带
         df_filtered = df_meta[df_meta['side'] != 0].copy()
         if 'event_valid' in df_filtered.columns:
             df_filtered = df_filtered[df_filtered['event_valid'] == True]
@@ -481,55 +553,8 @@ class MetaTrainer:
         # 修复: side!=0过滤后时间轴稀疏破坏等间距假设
         # 方案: 对每个symbol单独计算 optimal_d 和 fracdiff
         # ============================================================
-        logger.info("Step 3.5: Computing per-symbol FracDiff...")
-        fracdiff_config = self.config.get('fracdiff', {})
-        window = fracdiff_config.get('window', 100)
-        threshold = fracdiff_config.get('threshold', 0.05)
-        default_d = fracdiff_config.get('default_d', 0.5)
-
-        from src.features.fracdiff import find_min_d_stationary, fracdiff_fixed_window
-
-        df_meta = df_meta.copy()
-        df_meta['fracdiff'] = np.nan  # 初始化
-        per_symbol_d = {}
-
-        for symbol in df_meta['symbol'].unique():
-            sym_mask = df_meta['symbol'] == symbol
-            sym_prices = np.log(df_meta.loc[sym_mask, price_col])
-
-            if len(sym_prices) < window:
-                logger.warn("fracdiff_skip_symbol", {
-                    "symbol": symbol,
-                    "n_samples": len(sym_prices),
-                    "window": window,
-                    "reason": "insufficient samples for FracDiff"
-                })
-                df_meta.loc[sym_mask, 'fracdiff'] = 0.0
-                per_symbol_d[symbol] = 0.0
-                continue
-
-            # Per-symbol optimal d
-            try:
-                sym_d = find_min_d_stationary(sym_prices, threshold=threshold)
-            except Exception as e:
-                logger.warn("fracdiff_d_failed", {
-                    "symbol": symbol,
-                    "error": str(e)
-                })
-                sym_d = default_d
-
-            per_symbol_d[symbol] = sym_d
-
-            # Per-symbol fracdiff
-            sym_fd = fracdiff_fixed_window(sym_prices, sym_d, window)
-            df_meta.loc[sym_mask, 'fracdiff'] = sym_fd.values
-
-        logger.info("fracdiff_per_symbol_d", {
-            "per_symbol_d": per_symbol_d,
-            "n_symbols": len(per_symbol_d)
-        })
-
-        features_with_fracdiff = features + ['fracdiff']
+        # FIX-3: FracDiff 已移至 Step 2.3 (在 side 过滤之前)
+        # 排序确保 CPCV split 索引对齐
         
         # ============================================================
         # FATAL-1 Fix: 全局按时间排序，对齐 CPCV 内部排序

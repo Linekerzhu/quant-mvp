@@ -121,9 +121,12 @@ class TripleBarrierLabeler:
                         overlap_rejected += 1
                     continue
                 
+                # FIX-2: Get side from signal
+                event_side = int(symbol_df.loc[i, 'side']) if 'side' in symbol_df.columns else 1
+                
                 # Label this event and get actual exit
                 label, barrier, ret, actual_holding_days, exit_date = self._label_single_event_with_exit(
-                    symbol_df, i, trigger_date
+                    symbol_df, i, trigger_date, side=event_side
                 )
                 
                 # P1 (R27-A3): Check for invalid exit (NaN return)
@@ -244,13 +247,18 @@ class TripleBarrierLabeler:
         self,
         symbol_df: pd.DataFrame,
         trigger_idx: int,  # P2 (R27-B2): Renamed from entry_idx - this is trigger day, not entry day
-        trigger_date: pd.Timestamp
+        trigger_date: pd.Timestamp,
+        side: int = 1  # FIX-2: +1 for long, -1 for short
     ) -> Tuple[int, str, float, int, pd.Timestamp]:
         """
         Label a single event and return actual exit date.
         
         P2 (R27-B2) FIX: Parameter renamed from entry_idx to trigger_idx.
         Entry day is trigger_idx + 1 (T+1).
+        
+        FIX-2: Added side parameter to handle asymmetric barriers.
+        - Long (side=+1): profit barrier above, loss barrier below
+        - Short (side=-1): profit barrier below, loss barrier above
         
         Returns:
             (label, barrier_hit, return, holding_days, exit_date)
@@ -297,9 +305,21 @@ class TripleBarrierLabeler:
         if pd.isna(atr):
             return (0, 'invalid_atr', np.nan, 0, trigger_date)
         
-        # Set barriers
-        profit_barrier = entry_price * (1 + self.tp_mult * atr / entry_price)
-        loss_barrier = entry_price * (1 - self.sl_mult * atr / entry_price)
+        # FIX-2: Set barriers based on side
+        # Long (side=+1): profit above, loss below
+        # Short (side=-1): profit below, loss above
+        if side >= 0:  # Long or neutral
+            profit_barrier = entry_price * (1 + self.tp_mult * atr / entry_price)
+            loss_barrier = entry_price * (1 - self.sl_mult * atr / entry_price)
+        else:  # Short
+            profit_barrier = entry_price * (1 - self.tp_mult * atr / entry_price)  # Below entry
+            loss_barrier = entry_price * (1 + self.sl_mult * atr / entry_price)   # Above entry
+        
+        # Normalize: upper_barrier always above, lower_barrier always below
+        upper_barrier = max(profit_barrier, loss_barrier)
+        lower_barrier = min(profit_barrier, loss_barrier)
+        # Track which barrier is profit for label semantics
+        upper_is_profit = (side >= 0)  # Long: upper=profit, Short: upper=loss
         
         # Check each day in holding period
         # R33-A1: Start from day=0 (entry day T+1) instead of day=1
@@ -351,46 +371,54 @@ class TripleBarrierLabeler:
                 if pd.isna(day_open):
                     continue
                 
+                # FIX-2: Use normalized upper/lower barriers
                 # STEP 1: Gap Execution (跳空执行 - 最优先)
-                # If open already crossed barrier, use actual open price (not barrier)
-                # Loss gap takes priority over profit gap (pessimism)
-                
-                if day_open <= loss_barrier:
-                    # 开盘直接跳穿止损 → 用实际开盘价结算（更惨）
+                if day_open <= lower_barrier:
                     exit_price = day_open
-                    ret = np.log(exit_price / entry_price)
-                    return (-1, 'loss_gap' + degraded_suffix, ret, day, exit_date)
+                    ret = side * np.log(exit_price / entry_price)  # FIX-2: Add side
+                    # label = price direction: +1 if price went up, -1 if down
+                    label = 1 if (side >= 0 and day_open >= entry_price) or (side < 0 and day_open <= entry_price) else -1
+                    barrier_type = 'loss_gap' if upper_is_profit else 'profit_gap'
+                    return (label, barrier_type + degraded_suffix, ret, day, exit_date)
                 
-                if day_open >= profit_barrier:
-                    # 开盘直接跳穿止盈 → 用实际开盘价结算（比barrier更好但也更真实）
+                if day_open >= upper_barrier:
                     exit_price = day_open
-                    ret = np.log(exit_price / entry_price)
-                    return (1, 'profit_gap' + degraded_suffix, ret, day, exit_date)
+                    ret = side * np.log(exit_price / entry_price)  # FIX-2: Add side
+                    label = 1 if (side >= 0 and day_open >= entry_price) or (side < 0 and day_open <= entry_price) else -1
+                    barrier_type = 'profit_gap' if upper_is_profit else 'loss_gap'
+                    return (label, barrier_type + degraded_suffix, ret, day, exit_date)
             
             # STEP 2: Collision Detection (同日双穿检测)
             # R33-A1: Also applies to day=0
             # If both barriers hit same day, force loss (pessimism)
-            # Day-frequency can't determine intraday order
             
-            if day_high >= profit_barrier and day_low <= loss_barrier:
+            if day_high >= upper_barrier and day_low <= lower_barrier:
                 # 同日双穿 → 强制止损（最悲观原则）
-                exit_price = loss_barrier
-                ret = np.log(exit_price / entry_price)
-                return (-1, 'loss_collision' + degraded_suffix, ret, day, exit_date)
+                exit_price = lower_barrier
+                ret = side * np.log(exit_price / entry_price)  # FIX-2: Add side
+                # Long: lower=loss (-1), Short: lower=profit (+1) but price went down
+                label = -1 if side >= 0 else 1
+                return (label, 'loss_collision' + degraded_suffix, ret, day, exit_date)
             
             # STEP 3: Normal Path (正常路径)
             # R33-A1: Also applies to day=0
             # Loss check before profit check (pessimism)
             
-            if day_low <= loss_barrier:
-                exit_price = loss_barrier
-                ret = np.log(exit_price / entry_price)  # B24: Log return
-                return (-1, 'loss' + degraded_suffix, ret, day, exit_date)
+            if day_low <= lower_barrier:
+                exit_price = lower_barrier
+                ret = side * np.log(exit_price / entry_price)  # FIX-2: Add side
+                # Long: lower=loss (-1), Short: lower=profit (+1)
+                label = -1 if side >= 0 else 1
+                barrier_type = 'loss' if upper_is_profit else 'profit'
+                return (label, barrier_type + degraded_suffix, ret, day, exit_date)
             
-            if day_high >= profit_barrier:
-                exit_price = profit_barrier
-                ret = np.log(exit_price / entry_price)  # B24: Log return
-                return (1, 'profit' + degraded_suffix, ret, day, exit_date)
+            if day_high >= upper_barrier:
+                exit_price = upper_barrier
+                ret = side * np.log(exit_price / entry_price)  # FIX-2: Add side
+                # Long: upper=profit (+1), Short: upper=loss (-1)
+                label = 1 if side >= 0 else -1
+                barrier_type = 'profit' if upper_is_profit else 'loss'
+                return (label, barrier_type + degraded_suffix, ret, day, exit_date)
         
         # Time barrier hit
         exit_idx = min(entry_idx + self.max_holding_days, len(symbol_df) - 1)
@@ -404,7 +432,7 @@ class TripleBarrierLabeler:
             # This will be caught by label_events and set event_valid=False
             return (0, 'time_invalid_exit' + degraded_suffix, np.nan, self.max_holding_days, exit_date)
         
-        ret = np.log(exit_price / entry_price)  # B24: Log return
+        ret = side * np.log(exit_price / entry_price)  # FIX-2: Add side
         
         # P0-A2: AFML Ch3.4 - time barrier = no clear outcome → neutral label
         # 35% of events hit time barrier, 38% with |return| < 1%

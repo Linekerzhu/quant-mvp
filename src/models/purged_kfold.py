@@ -120,17 +120,9 @@ class CombinatorialPurgedKFold:
     
     @staticmethod
     def _combinations(n: int, r: int) -> int:
-        """Calculate C(n,r) = n! / (r! * (n-r)!)"""
-        if r > n:
-            return 0
-        if r == 0 or r == n:
-            return 1
-        # Optimize for large numbers
-        r = min(r, n - r)
-        result = 1
-        for i in range(1, r + 1):
-            result = result * (n - r + i) // i
-        return result
+        """FIX-9: Use math.comb for efficient calculation."""
+        from math import comb
+        return comb(n, r)
     
     def split(
         self,
@@ -149,6 +141,14 @@ class CombinatorialPurgedKFold:
         Yields:
             Tuple of (train_indices, test_indices) for each CPCV path
         """
+        # FIX-5: Force exit_date_col existence check
+        if exit_date_col not in df.columns:
+            raise ValueError(
+                f"Purged K-Fold requires '{exit_date_col}' column for purge/embargo. "
+                f"Available columns: {list(df.columns)[:10]}... "
+                f"Run TripleBarrierLabeler.label_events() first."
+            )
+        
         # Sort by date
         df = df.copy()
         df = df.sort_values(date_col).reset_index(drop=True)
@@ -391,6 +391,14 @@ class PurgedKFold:
         exit_date_col: str = 'label_exit_date'
     ) -> Iterator[Tuple[np.ndarray, np.ndarray]]:
         """Generate purged K-Fold splits."""
+        # FIX-5: Force exit_date_col existence check
+        if exit_date_col not in df.columns:
+            raise ValueError(
+                f"Purged K-Fold requires '{exit_date_col}' column for purge/embargo. "
+                f"Available columns: {list(df.columns)[:10]}... "
+                f"Run TripleBarrierLabeler.label_events() first."
+            )
+        
         df = df.copy()
         df = df.sort_values(date_col).reset_index(drop=True)
         n_samples = len(df)

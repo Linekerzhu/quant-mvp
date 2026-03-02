@@ -231,14 +231,16 @@ class OverfittingDetector:
         # - For Sharpe: 0.0 = zero excess return
         
         # OR2-04 Fix: 分别收集metrics和baselines
+        # D3 Fix: Use AUC instead of accuracy for DSR (threshold-free)
         metrics = []
         baselines = []
         
         for r in path_results:
-            metrics.append(r.get('accuracy', r.get('auc', 0.5)))
-            # R21-F2: Use majority-class baseline to prevent trivial models from gaming DSR
-            pr = r.get('positive_ratio', 0.5)
-            baselines.append(max(pr, 1 - pr))
+            # D3 Fix: Prefer AUC over accuracy (AUC is threshold-free)
+            # AUC baseline is always 0.5 (random), not positive_ratio
+            metrics.append(r.get('auc', r.get('accuracy', 0.5)))
+            # DSR baseline for AUC: 0.5 (random ranking)
+            baselines.append(0.5)
         
         # BUG-03 Fix: 使用per-path excess计算DSR
         excess = [metrics[i] - baselines[i] for i in range(len(metrics))]

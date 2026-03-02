@@ -654,9 +654,10 @@ class MetaTrainer:
             full_weights = self._calculate_sample_weights(df_meta)
             
             # Train final model (no early stopping needed, use fixed iterations)
-            # Use median best_iteration from CPCV paths as reference
+            # D6 Fix: Use 0.8 × median for safety margin
+            # CPCV fold best_iteration based on fold-local val, may not represent full data
             best_iterations = [r.get('best_iteration', 50) for r in path_results if r.get('best_iteration', 0) > 1]
-            final_rounds = int(np.median(best_iterations)) if best_iterations else 50
+            final_rounds = int(0.8 * np.median(best_iterations)) if best_iterations else 40
             final_rounds = max(final_rounds, 20)  # At least 20 rounds
             
             train_data = lgb.Dataset(X_full, label=y_full, weight=full_weights)

@@ -112,7 +112,7 @@ validation:
 overfitting:
   # Probability of Backtest Overfitting
   pbo_threshold: 0.30
-  pbo_reject: 0.40  # D4 Fix: Reduced from 0.50 to improve statistical power  # Hard gate: cannot proceed if PBO >= 0.5
+  pbo_reject: 0.40  # D4 Fix: Reduced from 0.50 to improve statistical power
   
   # Deflated Sharpe Ratio
   deflated_sharpe_threshold: 0.0

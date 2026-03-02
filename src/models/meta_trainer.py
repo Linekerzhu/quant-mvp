@@ -626,6 +626,18 @@ class MetaTrainer:
         
         logger.info(f"Dead path check: {len(dead_paths)}/{len(path_results)} ({dead_ratio*100:.1f}%)")
         
+        # FIX-14: Practical significance check - mean AUC must be at least 0.55
+        # D3 changed DSR from accuracy to AUC, removing implicit practical check
+        aucs = [r['auc'] for r in path_results]
+        mean_auc = np.mean(aucs)
+        
+        if mean_auc < 0.55:
+            logger.error(f"F9: mean_auc={mean_auc:.4f} < 0.55 (practical significance threshold)")
+            raise RuntimeError(
+                f"F9: mean_auc={mean_auc:.4f} < 0.55. "
+                f"Statistical significance (DSR) alone is insufficient, requires practical alpha."
+            )
+        
         # Step 5: Calculate PBO
         logger.info("Step 5: Calculating PBO...")
         overfitting_result = self.overfitting_detector.check_overfitting(path_results)

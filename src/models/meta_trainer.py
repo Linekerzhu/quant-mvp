@@ -693,8 +693,8 @@ class MetaTrainer:
             results['feature_list'] = features_with_fracdiff
             results['n_training_samples'] = len(df_meta)
         
+        # FIX-23: Reuse aucs computed in FIX-14, avoid duplicate calculation
         # Step 7: Aggregate results
-        aucs = [r['auc'] for r in path_results]
         accuracies = [r['accuracy'] for r in path_results]
         
         results = {
@@ -704,7 +704,7 @@ class MetaTrainer:
             'pbo_status': pbo_message,
             'overfitting_check': overfitting_result,
             'optimal_d': per_symbol_d,  # FATAL-3: per-symbol d values
-            'mean_auc': np.mean(aucs),
+            'mean_auc': mean_auc,  # FIX-23: Reuse from FIX-14
             'std_auc': np.std(aucs),
             'min_auc': np.min(aucs),
             'max_auc': np.max(aucs),

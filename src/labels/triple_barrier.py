@@ -372,19 +372,21 @@ class TripleBarrierLabeler:
                     continue
                 
                 # FIX-2: Use normalized upper/lower barriers
+                # label = price direction: +1 if price went UP, -1 if price went DOWN
                 # STEP 1: Gap Execution (跳空执行 - 最优先)
                 if day_open <= lower_barrier:
+                    # Price跌破lower barrier → 价格跌了
                     exit_price = day_open
                     ret = side * np.log(exit_price / entry_price)  # FIX-2: Add side
-                    # label = price direction: +1 if price went up, -1 if down
-                    label = 1 if (side >= 0 and day_open >= entry_price) or (side < 0 and day_open <= entry_price) else -1
+                    label = -1  # Price went DOWN
                     barrier_type = 'loss_gap' if upper_is_profit else 'profit_gap'
                     return (label, barrier_type + degraded_suffix, ret, day, exit_date)
                 
                 if day_open >= upper_barrier:
+                    # Price涨破upper barrier → 价格涨了
                     exit_price = day_open
                     ret = side * np.log(exit_price / entry_price)  # FIX-2: Add side
-                    label = 1 if (side >= 0 and day_open >= entry_price) or (side < 0 and day_open <= entry_price) else -1
+                    label = 1  # Price went UP
                     barrier_type = 'profit_gap' if upper_is_profit else 'loss_gap'
                     return (label, barrier_type + degraded_suffix, ret, day, exit_date)
             
@@ -393,11 +395,15 @@ class TripleBarrierLabeler:
             # If both barriers hit same day, force loss (pessimism)
             
             if day_high >= upper_barrier and day_low <= lower_barrier:
-                # 同日双穿 → 强制止损（最悲观原则）
-                exit_price = lower_barrier
-                ret = side * np.log(exit_price / entry_price)  # FIX-2: Add side
-                # Long: lower=loss (-1), Short: lower=profit (+1) but price went down
-                label = -1 if side >= 0 else 1
+                # 同日双穿 → 悲观原则用loss barrier退出
+                # 但label是价格方向
+                if upper_is_profit:  # 做多: loss在下方的lower_barrier
+                    exit_price = lower_barrier
+                    label = -1  # 价格跌了
+                else:             # 做空: loss在上方的upper_barrier
+                    exit_price = upper_barrier
+                    label = 1   # 价格涨了
+                ret = side * np.log(exit_price / entry_price)
                 return (label, 'loss_collision' + degraded_suffix, ret, day, exit_date)
             
             # STEP 3: Normal Path (正常路径)
@@ -405,18 +411,18 @@ class TripleBarrierLabeler:
             # Loss check before profit check (pessimism)
             
             if day_low <= lower_barrier:
+                # 价格跌到下方barrier
                 exit_price = lower_barrier
                 ret = side * np.log(exit_price / entry_price)  # FIX-2: Add side
-                # Long: lower=loss (-1), Short: lower=profit (+1)
-                label = -1 if side >= 0 else 1
+                label = -1  # Price went DOWN
                 barrier_type = 'loss' if upper_is_profit else 'profit'
                 return (label, barrier_type + degraded_suffix, ret, day, exit_date)
             
             if day_high >= upper_barrier:
+                # 价格涨到上方barrier
                 exit_price = upper_barrier
                 ret = side * np.log(exit_price / entry_price)  # FIX-2: Add side
-                # Long: upper=profit (+1), Short: upper=loss (-1)
-                label = 1 if side >= 0 else -1
+                label = 1  # Price went UP
                 barrier_type = 'profit' if upper_is_profit else 'loss'
                 return (label, barrier_type + degraded_suffix, ret, day, exit_date)
         

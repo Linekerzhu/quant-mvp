@@ -182,14 +182,18 @@ class SampleWeightCalculator:
             entry_pos, exit_pos = range_info
             # R22-F1: AFML Ch4 average uniqueness = mean(1/c(t))
             # c(t) already includes self, so 1/c gives correct uniqueness
-            if exit_pos > entry_pos:
-                concurrent_days = daily_concurrent[entry_pos:exit_pos]
+            # FIX-27: Sweep-line off-by-one - include exit_pos in slice
+            # diff[exit_pos + 1] -= 1 means event is active through exit_pos day,
+            # so we must include exit_pos in the average calculation
+            if exit_pos >= entry_pos:
+                concurrent_days = daily_concurrent[entry_pos:exit_pos + 1]
                 valid_days = concurrent_days[concurrent_days > 0]
                 if len(valid_days) > 0:
                     avg_uniqueness = np.mean(1.0 / valid_days)
                 else:
                     avg_uniqueness = 1.0
             else:
+                # FIX-27: Same-day event (entry_pos > exit_pos shouldn't happen, but guard)
                 avg_uniqueness = 1.0
             
             weights.loc[e['idx']] = avg_uniqueness

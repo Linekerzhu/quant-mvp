@@ -280,10 +280,30 @@ class MetaTrainer:
         
         # FIX-4: Add purge buffer between inner_train and validation
         # Prevents holding period overlap from leaking into early stopping
-        purge_buffer = self.config.get('triple_barrier', self.config.get('label', {})).get('max_holding_days', 10)
+        # FIX-28: Use date-based buffer instead of row count
+        # Panel data: 10 rows != 10 days (Phase D 500 sym ≈ 0.2 days)
+        max_holding_days = self.config.get('triple_barrier', self.config.get('label', {})).get('max_holding_days', 10)
         
-        val_start = n_train - val_size
-        inner_end = max(val_start - purge_buffer, 0)
+        # Get unique dates in training set for date-based buffer
+        train_dates = train_df['date'].sort_values().unique()
+        if len(train_dates) >= max_holding_days + val_size:
+            # Use date-based purge buffer: exclude last N unique dates
+            # purge_buffer_dates = dates just before val, of length max_holding_days
+            purge_buffer_dates = train_dates[-(max_holding_days + val_size):-val_size]
+            val_start = n_train - val_size
+            # Find first index where date >= purge_buffer end (exclude buffer entirely)
+            if len(purge_buffer_dates) > 0:
+                buffer_end_date = purge_buffer_dates[-1]
+                # Use >= to exclude buffer_end_date from inner_train
+                inner_end = np.where(train_df['date'].values >= buffer_end_date)[0]
+                inner_end = inner_end[0] if len(inner_end) > 0 else (n_train - val_size)
+            else:
+                inner_end = max(n_train - val_size - max_holding_days, 0)
+        else:
+            # Fallback to row-based if insufficient date range
+            purge_buffer = max_holding_days
+            val_start = n_train - val_size
+            inner_end = max(val_start - purge_buffer, 0)
         
         # Safety check: inner_train must have at least 2x min_data_in_leaf
         min_inner = self.config.get('lightgbm', {}).get('min_data_in_leaf', 100) * 2
@@ -515,9 +535,22 @@ class MetaTrainer:
                 })
                 sym_d = default_d
 
+            # FIX-29: Protect fracdiff computation from NaN data
+            # find_min_d_stationary may fail and return default_d,
+            # but the same NaN data will cause fracdiff_fixed_window to fail too
+            try:
+                sym_fd = fracdiff_fixed_window(sym_prices, sym_d, window)
+                df_meta.loc[sym_mask, 'fracdiff'] = sym_fd.values
+            except Exception as e:
+                logger.warn("fracdiff_compute_failed", {
+                    "symbol": symbol,
+                    "error": str(e)
+                })
+                df_meta.loc[sym_mask, 'fracdiff'] = 0.0
+                per_symbol_d[symbol] = 0.0
+                continue
+
             per_symbol_d[symbol] = sym_d
-            sym_fd = fracdiff_fixed_window(sym_prices, sym_d, window)
-            df_meta.loc[sym_mask, 'fracdiff'] = sym_fd.values
 
         logger.info("fracdiff_per_symbol_d", {
             "per_symbol_d": per_symbol_d,
@@ -651,7 +684,25 @@ class MetaTrainer:
             logger.error(f"Overfitting Gate BLOCKED: PBO={pbo_message}, DSR={overfitting_result.get('dsr_message', 'N/A')}")
             raise RuntimeError(f"Overfitting Gate BLOCKED: PBO={pbo_message}, DSR={overfitting_result.get('dsr_message', 'N/A')}")
         
-        # R23-F1: Train final model on full data for inference
+        # FIX-26: Initialize results dict before try block to avoid UnboundLocalError
+        # When real data passes all Gates (FIX-14 + PBO + DSR + Dummy), 
+        # Step 6 will execute and must not crash at final model training
+        results = {
+            'paths': path_results,
+            'n_paths': len(path_results),
+            'pbo': pbo,
+            'pbo_status': pbo_message,
+            'overfitting_check': overfitting_result,
+            'optimal_d': per_symbol_d,
+            'mean_auc': mean_auc,
+            'std_auc': np.std(aucs),
+            'min_auc': np.min(aucs),
+            'max_auc': np.max(aucs),
+            'mean_accuracy': np.mean([r['accuracy'] for r in path_results]),
+            'std_accuracy': np.std([r['accuracy'] for r in path_results]),
+        }
+        
+        # Step 6: Train final model on full data for inference
         # Gate PASSED - train a final model using all data (no test split)
         logger.info("Step 6: Training final model on full data for inference...")
         
@@ -694,23 +745,7 @@ class MetaTrainer:
             results['n_training_samples'] = len(df_meta)
         
         # FIX-23: Reuse aucs computed in FIX-14, avoid duplicate calculation
-        # Step 7: Aggregate results
-        accuracies = [r['accuracy'] for r in path_results]
-        
-        results = {
-            'paths': path_results,
-            'n_paths': len(path_results),
-            'pbo': pbo,
-            'pbo_status': pbo_message,
-            'overfitting_check': overfitting_result,
-            'optimal_d': per_symbol_d,  # FATAL-3: per-symbol d values
-            'mean_auc': mean_auc,  # FIX-23: Reuse from FIX-14
-            'std_auc': np.std(aucs),
-            'min_auc': np.min(aucs),
-            'max_auc': np.max(aucs),
-            'mean_accuracy': np.mean(accuracies),
-            'std_accuracy': np.std(accuracies),
-        }
+        # Step 7: Aggregate results (moved before Step 6 for FIX-26)
         
         logger.info("=" * 60)
         logger.info("Meta-Labeling Training Complete")

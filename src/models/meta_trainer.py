@@ -299,9 +299,10 @@ class MetaTrainer:
             val_start = n_train - val_size
             # Find first index where date >= purge_buffer end (exclude buffer entirely)
             if len(purge_buffer_dates) > 0:
-                buffer_end_date = purge_buffer_dates[-1]
-                # Use >= to exclude buffer_end_date from inner_train
-                inner_end = np.where(train_df['date'].values >= buffer_end_date)[0]
+                # FIX-28 v3: Use purge_buffer_dates[0] (first day of buffer), not [-1] (last day)
+                # np.where(date >= buffer_start) excludes all buffer days from inner_train
+                buffer_start_date = purge_buffer_dates[0]
+                inner_end = np.where(train_df['date'].values >= buffer_start_date)[0]
                 inner_end = inner_end[0] if len(inner_end) > 0 else (n_train - val_size)
             else:
                 inner_end = max(n_train - val_size - max_holding_days, 0)

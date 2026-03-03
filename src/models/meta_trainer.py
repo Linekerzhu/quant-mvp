@@ -280,16 +280,22 @@ class MetaTrainer:
         
         # FIX-4: Add purge buffer between inner_train and validation
         # Prevents holding period overlap from leaking into early stopping
-        # FIX-28: Use date-based buffer instead of row count
+        # FIX-28: Use date-based buffer instead of row count (v2 - fixed index bug)
         # Panel data: 10 rows != 10 days (Phase D 500 sym ≈ 0.2 days)
         max_holding_days = self.config.get('triple_barrier', self.config.get('label', {})).get('max_holding_days', 10)
         
         # Get unique dates in training set for date-based buffer
         train_dates = train_df['date'].sort_values().unique()
-        if len(train_dates) >= max_holding_days + val_size:
-            # Use date-based purge buffer: exclude last N unique dates
-            # purge_buffer_dates = dates just before val, of length max_holding_days
-            purge_buffer_dates = train_dates[-(max_holding_days + val_size):-val_size]
+        
+        # FIX-28 v2: Calculate how many unique dates the val set actually covers
+        # val_size is row count (e.g., 200 rows), but we need date count for date-based buffer
+        val_dates = train_df['date'].iloc[n_train - val_size:].unique()
+        val_date_count = len(val_dates)  # Actual number of unique dates in val
+        
+        if len(train_dates) >= max_holding_days + val_date_count:
+            # Use date-based purge buffer: exclude last max_holding_days unique dates
+            # BEFORE the val dates (not using val_size as index!)
+            purge_buffer_dates = train_dates[-(max_holding_days + val_date_count):-val_date_count]
             val_start = n_train - val_size
             # Find first index where date >= purge_buffer end (exclude buffer entirely)
             if len(purge_buffer_dates) > 0:

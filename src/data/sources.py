@@ -111,7 +111,7 @@ class YFinanceSource(DataSource):
                 # Rate limiting: min 0.5s between requests (Plan v4 patch)
                 time.sleep(0.5)
                 
-                ticker = yf.Ticker(symbol, session=self.session)
+                ticker = yf.Ticker(symbol)
                 
                 # Fetch adjusted prices (backward-adjusted for splits/dividends)
                 adj_hist = ticker.history(start=start, end=end, auto_adjust=True)

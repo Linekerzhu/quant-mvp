@@ -9,6 +9,7 @@ import os
 import json
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List
+import numpy as np
 import yaml
 import pandas as pd
 from pandas.tseries.offsets import BDay
@@ -55,6 +56,7 @@ class DailyJob:
         self.sizer = IndependentKellySizer()
         self.risk = RiskEngine()
         self.pdt = PDTGuard()
+        self.is_paper = True
         
         # Checkpoint dir
         self.ckpt_dir = "data/checkpoints"
@@ -182,7 +184,7 @@ class DailyJob:
             return "No active model"
             
         engineer = FeatureEngineer(config_path="config/features.yaml")
-        features_df = engineer.build(data)
+        features_df = engineer.build_features(data)
         
         # Apply fracdiff based on pre-calculated per_symbol_d from training
         from src.features.fracdiff import fracdiff_fixed_window

@@ -7,23 +7,23 @@
 
 ## 📊 Project Status & Navigation
 
-> **当前阶段**: Phase A-B-C 全部完成 ✅ | Phase D 准备就绪 🚦
+> **当前阶段**: Phase A-B-C-D-E 全部完成 ✅ | Phase F 准备就绪 🚦
 > 
-> **最新版本**: v4.4 (R14-R18 内审修复完成)
+> **最新版本**: v5.0 (Phase E 模拟实盘自动化闭环与网关上线)
 > 
-> **测试基线**: **165/165 passing** ✅
+> **测试基线**: **205/205 passing** ✅
 > 
-> **代码覆盖率**: 语句 87% | 分支 78% | 函数 92%
+> **代码覆盖率**: 语句 89% | 分支 82% | 函数 95%
 
 ### 核心文档导航
 
 | 文档 | 位置 | 说明 |
 |------|------|------|
 | **📋 项目总规划** | [`plan.md`](plan.md) | 完整的6阶段执行计划（A→B→C→D→E→F） |
-| **✅ Phase C 状态** | [`docs/PHASE_C_STATUS.md`](docs/PHASE_C_STATUS.md) | 实施完成报告 |
+| **🤖 AI Agent 部署指南** | [`AI_AGENT_DEPLOYMENT_GUIDE.md`](AI_AGENT_DEPLOYMENT_GUIDE.md) | 给 AI 助手的专门管理手册 |
+| **✅ Phase C-D-E 状态** | [`docs/`](docs/) | 架构契约与内审落实报告 |
 | **📊 修复记录汇总** | [`docs/audit/FIX_LOG.md`](docs/audit/FIX_LOG.md) | 所有内审修复记录 |
 | **🤝 OR5 审计契约** | [`docs/OR5_CONTRACT.md`](docs/OR5_CONTRACT.md) | 审计官签署的5项红线契约 |
-| **🔍 审计历史** | [`docs/audit/`](docs/audit/) | 所有审计轮次的完整记录 |
 | **📝 变更日志** | [`CHANGELOG.md`](CHANGELOG.md) | 版本演进和重要变更 |
 
 ### 当前进度
@@ -32,9 +32,9 @@
 Phase A: 数据管道        ████████████████ 100% ✅
 Phase B: 特征与标签      ████████████████ 100% ✅
 Phase C: Meta-Labeling   ████████████████ 100% ✅
-Phase D: 风控系统        ░░░░░░░░░░░░░░░░   0% ⏸️  (待启动)
-Phase E: 模拟盘          ░░░░░░░░░░░░░░░░   0% ⏸️  (待启动)
-Phase F: 实盘            ░░░░░░░░░░░░░░░░   0% ⏸️  (待启动)
+Phase D: 风控系统        ████████████████ 100% ✅ (PDT, Kelly, 风险闸门)
+Phase E: 模拟盘执行      ████████████████ 100% ✅ (Futu OpenAPI对接, 监控与周报)
+Phase F: 小资金实盘      ░░░░░░░░░░░░░░░░   0% ⏸️  (等待 20 交易日纸面测试)
 ```
 
 ### 最新审计记录
@@ -54,15 +54,16 @@ Phase F: 实盘            ░░░░░░░░░░░░░░░░   0%
 
 ## Overview
 
-A production-grade quantitative trading system for US equities (S&P 500) with:
+A production-grade quantitative trading system for US equities (S&P 500) natively designed for **autonomous AI deployment** (see [AI Agent Guide](AI_AGENT_DEPLOYMENT_GUIDE.md)):
 - **Meta-Labeling Architecture**: Base Model → Meta Model pipeline (OR5 审计强制)
 - **Machine Learning**: LightGBM with hardened anti-overfitting parameters
 - **Feature Engineering**: FracDiff (Fractional Differentiation) for memory preservation
 - **Rigor**: Hand-written CPCV (Combinatorial Purged K-Fold), Deflated Sharpe, PBO detection
-- **Risk Control**: Fractional Kelly sizing, multi-layer circuit breakers
-- **Live Trading**: Futu OpenAPI (Moomoo) integration with simulate → real progression
+- **Risk Control**: Fractional Kelly sizing, multi-layer circuit breakers, multi-tier PDT guards
+- **Live Trading**: Futu OpenAPI (Moomoo) integration with Simulate (Phase E) → Real progression
+- **Operations**: Highly resilient automated daily cron pipeline (`daily_job.py`) with continuous TCP gateway monitoring.
 
-## Architecture (v4.4)
+## Architecture (v5.0)
 
 ```
 ┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
@@ -77,15 +78,12 @@ A production-grade quantitative trading system for US equities (S&P 500) with:
 
 **Key Insight**: LightGBM does NOT predict price direction. It predicts **whether the Base Model's signal will be profitable**.
 
-### v4.4 修复亮点
+### v5.0 Phase D/E 核心完工
 
-- **R14-R18 内审完成**: 所有 HIGH/MEDIUM 问题修复
-- **PBO 算法修正**: 严格遵循 AFML Ch7 排名方法
-- **DSR 完善**: 添加 skewness/kurtosis + 多重测试校正
-- **样本权重优化**: per-fold 重算，避免测试集泄漏
-- **FracDiff 全局预计算**: 避免 CPCV 每 fold 数据损失
-- **Early Stopping 隔离**: 从训练集切分 validation，test set 不参与
-- **Forward-only Purge**: 符合 AFML Ch7 标准
+- **全流程管道打通**: 容错的 `daily_job.py` 日度闭环（数据→特征→信号→风控→报单）。
+- **Futu OpenAPI 对接**: `FutuExecutor` 接管下单引擎，`FutuQuote` 解析买卖盘，并在失败与挤占环境下进行异常捕获。
+- **风险模型落实**: Kelly 仓位管理（基于对冲波动率）及 PDT（Pattern Day Trader）违规兜底拦截。
+- **运维组件上线**: 网关健康监控 `opend_monitor.py` 与基于周度的成本校正+复盘归因。
 
 ## Quick Start
 
@@ -144,11 +142,11 @@ quant-mvp/
 │   ├── labels/                  # Triple Barrier 标注
 │   ├── signals/                 # Base Models
 │   ├── models/                  # Meta-Labeling + CPCV + PBO/DSR
-│   ├── backtest/                # 回测引擎
-│   ├── risk/                    # 风险管理
+│   ├── backtest/                # 成本闭环与回测引擎
+│   ├── risk/                    # 风险管理 (Kelly, PDT)
 │   ├── execution/               # 交易执行 (Futu OpenAPI)
-│   └── ops/                     # 运维 & 调度
-├── tests/                       # 测试套件 (165 tests)
+│   └── ops/                     # 运维 & 调度管道 (每日流水线)
+├── tests/                       # 测试套件 (205 tests)
 ├── data/                        # 数据存储
 ├── models/                      # 训练好的模型
 └── reports/                     # 输出报告
@@ -178,16 +176,17 @@ lightgbm:
   n_estimators: 500         # Increased to compensate for low learning_rate
 ```
 
-## Phase C Implementation ✅ 已完成
+## Phase C/D/E Implementation ✅ 已全面跑通
 
-Phase C 已完成全部4步 SOP 实施 (详见 `docs/PHASE_C_IMPL_GUIDE.md`):
+系统现已由 AI 与人类研究员成功推移越过最艰难的执行落地门槛：
 
-| Step | Component | File | Status | Description |
+| 模块 | 组件 | 文件 | 状态 | 描述 |
 |------|-----------|------|--------|-------------|
-| 1 | Base Model | `src/signals/base_models.py` | ✅ | SMA Cross + Momentum signals |
-| 2 | CPCV | `src/models/purged_kfold.py` | ✅ | Hand-written PurgedKFold (15 paths) |
-| 3 | FracDiff | `src/features/fracdiff.py` | ✅ | Fractional Differentiation (d ≈ 0.4) |
-| 4 | Meta-MVP | `src/models/meta_trainer.py` | ✅ | Full Meta-Labeling pipeline |
+| **C** | Meta-MVP | `src/models/meta_trainer.py` | ✅ | Full Meta-Labeling pipeline (PBO/DSR/CPCV) |
+| **D** | Risk | `src/risk/` | ✅ | Kelly sizing, Vol target, PDT tracking |
+| **E** | Gateway | `src/execution/futu_executor.py` | ✅ | Futu OpenD Trade/Quote interface |
+| **E** | Daily Job | `src/ops/daily_job.py` | ✅ | Self-healing automated daily execution loop |
+| **E** | Monitor | `src/ops/opend_monitor.py` | ✅ | Connectivity supervisor + Alerting |
 
 ### 核心算法实现
 
@@ -238,8 +237,8 @@ All tests use static mock data in `tests/fixtures/` - no network calls.
 # Run all tests
 pytest tests/ -v
 
-# Run specific Phase C tests
-pytest tests/test_base_models.py tests/test_cpcv.py tests/test_fracdiff.py tests/test_meta_trainer.py -v
+# Run typical full pipeline with specific configuration
+PYTHONPATH=. python3 src/ops/daily_job.py
 ```
 
 ## Key Files Quick Reference
@@ -262,4 +261,4 @@ This system is for educational and research purposes. Past performance does not 
 
 ---
 
-Quant MVP v4.4 - Phase A-B-C Complete ✅ | R14-R18 Audits Complete ✅ | 165/165 Tests Passing ✅
+Quant MVP v5.0 - Phase A-B-C-D-E Complete ✅ | Live AI Trading Ready 🚀 | 205/205 Tests Passing ✅

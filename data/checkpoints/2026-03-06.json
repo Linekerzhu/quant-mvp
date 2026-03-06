@@ -1,0 +1,11 @@
+{
+  "ingest": true,
+  "validate": true,
+  "integrity": true,
+  "corporate_actions": true,
+  "universe": true,
+  "features": true,
+  "signals": true,
+  "risk_and_size": true,
+  "execute": true
+}

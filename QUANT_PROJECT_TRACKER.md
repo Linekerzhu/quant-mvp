@@ -76,11 +76,11 @@
 - [ ] IC加权集成
 - [ ] 模型换代门控
 
-### Phase D: 信号过滤与风控 [待开始]
-- [ ] Meta-Labeling（条件启用）
-- [ ] Fractional Kelly仓位
-- [ ] 多层风控闸门
-- [ ] PDT合规守卫
+### Phase D: 信号过滤与风控 [✅已完成]
+- [x] Meta-Labeling（条件启用 -> OR5强制）
+- [x] Fractional Kelly仓位
+- [x] 多层风控闸门
+- [x] PDT合规守卫
 
 ### Phase E: 模拟盘运行 [4-6周，日历时间]
 - [ ] Alpaca Paper Trading

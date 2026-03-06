@@ -60,7 +60,7 @@ class PDTGuard:
         day_trade_count = self._count_day_trades(trade_history)
         
         # Check compliance
-        is_compliant = day_trade_count < self.max_day_trades
+        is_compliant = day_trade_count <= self.max_day_trades
         remaining = max(0, self.max_day_trades - day_trade_count)
         
         details = {

@@ -745,6 +745,15 @@ class MetaTrainer:
             results['feature_list'] = features_with_fracdiff
             results['n_training_samples'] = len(X_full)
             
+            # Phase E addition: save persistent model bundle
+            from src.models.model_io import ModelBundleManager
+            mgr = ModelBundleManager()
+            metadata = {
+                "feature_list": features_with_fracdiff,
+                "optimal_d": per_symbol_d
+            }
+            mgr.save_bundle(final_model, metadata)
+            
         except Exception as e:
             logger.warn(f"Failed to train final model: {e}")
             results['model'] = None

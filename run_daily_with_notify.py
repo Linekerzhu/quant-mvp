@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """
-Daily Job Runner with Telegram Notification (v2 — Mobile-Optimized)
+Daily Job Runner with LLM-Enhanced Telegram Notification
 
-Runs daily_job.py and sends a single, compact, actionable Telegram report.
+Runs daily_job.py, collects structured results, sends them to DeepSeek LLM
+for professional report generation, then delivers to Telegram.
+Falls back to template report if LLM unavailable.
 """
 
 import os
@@ -12,7 +14,6 @@ import requests
 import pandas as pd
 import json
 from datetime import datetime
-from pathlib import Path
 
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 
@@ -45,7 +46,10 @@ def send_telegram(env, message, parse_mode="Markdown"):
                 "chat_id": chat_id, "text": chunk, "parse_mode": parse_mode
             }, timeout=10)
             if not resp.ok:
-                print(f"Telegram fail: {resp.status_code}")
+                print(f"Telegram fail: {resp.status_code} {resp.text[:200]}")
+                # If Markdown parse fails, retry without parse_mode
+                if resp.status_code == 400 and "parse" in resp.text.lower():
+                    requests.post(url, json={"chat_id": chat_id, "text": chunk}, timeout=10)
                 ok = False
         except Exception as e:
             print(f"Telegram error: {e}")
@@ -118,7 +122,6 @@ def read_portfolio_summary():
 
 
 def get_latest_prices(trade_date):
-    """Get latest close prices from features file."""
     path = os.path.join(PROJECT_ROOT, f'data/processed/features_{trade_date}.parquet')
     if not os.path.exists(path):
         return {}
@@ -144,153 +147,226 @@ def get_universe_count(trade_date):
     return None
 
 
-# ── Report Builder (Mobile-Optimized) ───────────────────
+# ── Collect Structured Data ─────────────────────────────
 
-def build_report(trade_date, elapsed, returncode, stderr):
-    """Build compact, actionable Telegram report for mobile."""
+def collect_report_data(trade_date, elapsed, returncode, stderr):
+    """Collect all pipeline data into a structured dict for LLM consumption."""
 
-    ok = returncode == 0
-    L = []  # lines
+    data = {
+        "date": trade_date,
+        "status": "success" if returncode == 0 else "failed",
+        "elapsed_seconds": round(elapsed),
+        "error": stderr[-300:] if returncode != 0 else None,
+    }
 
-    # ─ Header (compact) ─
-    L.append(f"📊 *Quant MVP v6.0 日报*")
-    L.append(f"📅 `{trade_date}` {'✅' if ok else '❌'} `{elapsed:.0f}s`")
+    if returncode != 0:
+        return data
 
-    if not ok:
-        L.append(f"\n⛔ *错误*:\n```\n{stderr[-300:]}\n```")
-        return '\n'.join(L)
+    data["universe_count"] = get_universe_count(trade_date)
 
-    universe = get_universe_count(trade_date)
-    if universe:
-        L.append(f"🌐 股票池 `{universe}` 只")
-
+    # Signals
     signals_df = read_signals(trade_date)
+    if signals_df is not None and len(signals_df) > 0:
+        buys = signals_df[signals_df['side'] > 0]
+        sells = signals_df[signals_df['side'] < 0]
+        avg_prob = float(signals_df['prob'].mean()) * 100 if 'prob' in signals_df.columns else 0
+
+        top_buys = buys.sort_values('prob', ascending=False).head(5)['symbol'].tolist() if 'prob' in buys.columns and len(buys) > 0 else []
+        top_sells = sells.sort_values('prob', ascending=False).head(5)['symbol'].tolist() if 'prob' in sells.columns and len(sells) > 0 else []
+
+        data["signals"] = {
+            "buy_count": len(buys),
+            "sell_count": len(sells),
+            "avg_confidence": round(avg_prob, 1),
+            "top_buys": top_buys,
+            "top_sells": top_sells,
+        }
+    else:
+        data["signals"] = None
+
+    # Targets & Oracle
     targets_df = read_targets(trade_date)
     prices = get_latest_prices(trade_date)
     perf = read_portfolio_summary()
     nav = perf['nav'] if perf else 100000
 
-    # ─ Section 1: Dual Model Summary (compact) ─
-    L.append("")
-    L.append("*▸ 本地双模型*")
-    if signals_df is not None and len(signals_df) > 0:
-        buys = signals_df[signals_df['side'] > 0]
-        sells = signals_df[signals_df['side'] < 0]
-        avg_p = float(signals_df['prob'].mean()) * 100 if 'prob' in signals_df.columns else 0
-        L.append(f"🟢买`{len(buys)}`个 🔴卖`{len(sells)}`个 置信`{avg_p:.0f}%`")
-
-        # Top 5 buy signals
-        if len(buys) > 0:
-            top_buys = buys.sort_values('prob', ascending=False).head(5) if 'prob' in buys.columns else buys.head(5)
-            buy_syms = ' '.join([f"`{r['symbol']}`" for _, r in top_buys.iterrows()])
-            L.append(f"  TOP买: {buy_syms}")
-
-        # Top 5 sell signals
-        if len(sells) > 0:
-            top_sells = sells.sort_values('prob', ascending=False).head(5) if 'prob' in sells.columns else sells.head(5)
-            sell_syms = ' '.join([f"`{r['symbol']}`" for _, r in top_sells.iterrows()])
-            L.append(f"  TOP卖: {sell_syms}")
-    else:
-        L.append("⚪ 无信号")
-
-    # ─ Section 2: Oracle Verdict (compact) ─
-    L.append("")
-    L.append("*▸ Kronos 专家审查*")
-
-    vetoed_syms = set()
-    if targets_df is not None and 'oracle_action' in targets_df.columns:
-        approved = targets_df[targets_df['oracle_action'] == 'approve']
-        neutral = targets_df[targets_df['oracle_action'] == 'neutral']
-        if signals_df is not None:
-            signal_syms = set(signals_df['symbol'].unique())
-            target_syms = set(targets_df['symbol'].unique())
-            vetoed_syms = signal_syms - target_syms
-        vetoed_count = len(vetoed_syms)
-
-        L.append(f"✅`{len(approved)}` ⚖️`{len(neutral)}` 🚫`{vetoed_count}`")
-
-        # Show vetoed symbols (ALL of them — this is critical info)
-        if vetoed_count > 0:
-            veto_list = ' '.join([f"`{s}`" for s in sorted(vetoed_syms)[:20]])
-            L.append(f"否决: {veto_list}")
-            if vetoed_count > 20:
-                L.append(f"  +{vetoed_count - 20}只")
-    elif targets_df is not None:
-        L.append("ℹ️ Oracle未参与")
-    else:
-        L.append("⚪ 无目标需审查")
-
-    # ─ Section 3: ACTIONABLE ORDERS (the most important part) ─
-    L.append("")
-    L.append("*▸ 📋 执行指令*")
-
     if targets_df is not None and len(targets_df) > 0 and 'target_weight' in targets_df.columns:
-        # Filter out zero-weight targets — they are noise
+        # Oracle stats
+        has_oracle = 'oracle_action' in targets_df.columns
+        oracle_info = None
+        vetoed_syms = []
+        if has_oracle:
+            approved = targets_df[targets_df['oracle_action'] == 'approve']
+            neutral = targets_df[targets_df['oracle_action'] == 'neutral']
+            if signals_df is not None:
+                signal_syms = set(signals_df['symbol'].unique())
+                target_syms = set(targets_df['symbol'].unique())
+                vetoed_syms = sorted(signal_syms - target_syms)
+            oracle_info = {
+                "approved": len(approved),
+                "neutral": len(neutral),
+                "vetoed": len(vetoed_syms),
+                "vetoed_symbols": vetoed_syms,
+            }
+
+        # Actionable orders (filter zero-weight)
         actionable = targets_df[targets_df['target_weight'].abs() >= 0.005].copy()
         actionable = actionable.sort_values('target_weight', key=abs, ascending=False)
+        zero_filtered = len(targets_df) - len(actionable)
 
-        if len(actionable) > 0:
-            buy_orders = actionable[actionable['target_weight'] > 0]
-            sell_orders = actionable[actionable['target_weight'] < 0]
-            total_w = actionable['target_weight'].sum() * 100
+        orders = []
+        for _, r in actionable.iterrows():
+            sym = r['symbol']
+            w = float(r['target_weight'])
+            price = prices.get(sym, 0)
+            qty = int(abs(w) * nav / price) if price > 0 else 0
+            oracle_pred = float(r.get('oracle_pred_ret', 0)) * 100 if has_oracle and 'oracle_pred_ret' in r.index else None
 
-            L.append(f"买`{len(buy_orders)}`笔 卖`{len(sell_orders)}`笔 总仓`{total_w:.1f}%`")
-            L.append("")
+            orders.append({
+                "symbol": sym,
+                "direction": "BUY" if w > 0 else "SELL",
+                "weight_pct": round(w * 100, 2),
+                "price": round(price, 2) if price > 0 else None,
+                "shares": qty,
+                "kronos_pred_pct": round(oracle_pred, 1) if oracle_pred is not None else None,
+            })
 
-            # Buy orders with precise instructions
-            if len(buy_orders) > 0:
-                L.append("🟢 *买入:*")
-                for _, r in buy_orders.iterrows():
-                    sym = r['symbol']
-                    w = r['target_weight'] * 100
-                    price = prices.get(sym, 0)
-                    oracle_ret = r.get('oracle_pred_ret', 0) * 100 if 'oracle_pred_ret' in r.index else 0
-
-                    if price > 0:
-                        qty = int(abs(r['target_weight']) * nav / price)
-                        L.append(f"  `{sym}` {w:.1f}% ${price:.0f}×{qty}股")
-                        if oracle_ret != 0:
-                            L.append(f"    ↳Kronos `{oracle_ret:+.1f}%`")
-                    else:
-                        L.append(f"  `{sym}` {w:.1f}%")
-
-            # Sell orders with precise instructions
-            if len(sell_orders) > 0:
-                L.append("🔴 *卖出:*")
-                for _, r in sell_orders.iterrows():
-                    sym = r['symbol']
-                    w = r['target_weight'] * 100
-                    price = prices.get(sym, 0)
-
-                    if price > 0:
-                        qty = int(abs(r['target_weight']) * nav / price)
-                        L.append(f"  `{sym}` {w:.1f}% ${price:.0f}×{qty}股")
-                    else:
-                        L.append(f"  `{sym}` {w:.1f}%")
-        else:
-            L.append("⚪ 无有效仓位 (全部权重<0.5%)")
-
-        # Count how many were filtered as zero-weight
-        zero_w = len(targets_df) - len(actionable)
-        if zero_w > 0:
-            L.append(f"\n_({zero_w}只权重为0已过滤)_")
+        data["oracle"] = oracle_info
+        data["orders"] = orders
+        data["zero_weight_filtered"] = zero_filtered
+        data["total_weight_pct"] = round(actionable['target_weight'].sum() * 100, 1)
     else:
-        L.append("⚪ 今日无交易")
+        data["oracle"] = None
+        data["orders"] = []
+        data["zero_weight_filtered"] = 0
+        data["total_weight_pct"] = 0
 
-    # ─ Section 4: Portfolio (one-line compact) ─
-    L.append("")
-    L.append("*▸ 虚拟组合*")
-    if perf:
-        ret_icon = "📈" if perf['cum_return'] >= 0 else "📉"
-        L.append(f"💰`${perf['nav']:,.0f}` {ret_icon}`{perf['cum_return']:+.2f}%` 回撤`{perf['max_dd']:.1f}%`")
-        L.append(f"持仓`{perf['positions']}`只 现金`${perf['cash']:,.0f}` 交易`{perf['total_trades']}`笔")
+    # Portfolio
+    data["portfolio"] = perf
+
+    return data
+
+
+# ── DeepSeek LLM Report ────────────────────────────────
+
+REPORT_PROMPT = """你是一个量化交易系统的日报生成器。请根据以下JSON数据，生成一份简洁、专业且适合在**Telegram手机端**阅读的每日交易报告。
+
+规则：
+1. 使用Telegram Markdown格式（*粗体*、`代码`、_斜体_）
+2. 手机屏幕小，每行不超过35个字符，不要用长横线
+3. 报告必须包含以下板块，用emoji标题分隔：
+   - 📊 系统概况（一行：日期+状态+耗时）
+   - 🧠 双模型信号（SMA+Momentum生成的买卖信号概况）
+   - 🔮 Kronos专家审查（批准/否决数，列出所有被否决的股票代码）
+   - 📋 执行指令（最重要板块！每笔订单必须写清：买/卖+股票代码+仓位比例+价格+股数；如果Kronos有预测，附上预测回报）
+   - 💼 组合绩效（净值+回报+回撤+持仓数+现金）
+4. 不要遗漏任何一笔订单！每一笔都要展示
+5. 如果订单为空，写"今日无操作"
+6. 末尾签名：_Quant MVP v6.0 | SMA+Momentum+Kronos_
+7. 总长度控制在Telegram单条消息限制内（<4000字符）
+8. 语言：中文为主，股票代码和数字用英文
+
+JSON数据：
+```json
+{data_json}
+```
+
+直接输出报告内容，不要输出任何解释或开头语。"""
+
+
+def generate_llm_report(env, report_data):
+    """Call DeepSeek to generate a polished Telegram report."""
+    api_key = env.get('DEEPSEEK_API_KEY', '')
+    if not api_key:
+        print("[LLM] No DEEPSEEK_API_KEY, falling back to template")
+        return None
+
+    data_json = json.dumps(report_data, ensure_ascii=False, indent=2)
+    prompt = REPORT_PROMPT.replace("{data_json}", data_json)
+
+    try:
+        resp = requests.post(
+            "https://api.deepseek.com/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "deepseek-chat",
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.3,
+                "max_tokens": 2000,
+            },
+            timeout=30,
+        )
+        resp.raise_for_status()
+        result = resp.json()
+        content = result['choices'][0]['message']['content'].strip()
+
+        # Strip markdown code fences if LLM wraps output
+        if content.startswith("```"):
+            lines = content.split('\n')
+            content = '\n'.join(lines[1:-1] if lines[-1].strip() == '```' else lines[1:])
+
+        print(f"[LLM] DeepSeek returned {len(content)} chars")
+        return content
+
+    except Exception as e:
+        print(f"[LLM] DeepSeek failed: {e}")
+        return None
+
+
+# ── Fallback Template Report ────────────────────────────
+
+def build_fallback_report(data):
+    """Compact template report if LLM is unavailable."""
+    L = []
+    L.append(f"📊 *Quant MVP v6.0 日报*")
+    L.append(f"📅 `{data['date']}` {'✅' if data['status']=='success' else '❌'} `{data['elapsed_seconds']}s`")
+
+    if data['status'] != 'success':
+        L.append(f"\n⛔ *错误*:\n```\n{data.get('error','')}\n```")
+        return '\n'.join(L)
+
+    uc = data.get('universe_count')
+    if uc: L.append(f"🌐 股票池`{uc}`只")
+
+    sig = data.get('signals')
+    if sig:
+        L.append(f"\n*▸ 双模型信号*")
+        L.append(f"🟢买`{sig['buy_count']}`个 🔴卖`{sig['sell_count']}`个 置信`{sig['avg_confidence']:.0f}%`")
+
+    orc = data.get('oracle')
+    if orc:
+        L.append(f"\n*▸ Kronos审查*")
+        L.append(f"✅`{orc['approved']}` ⚖️`{orc['neutral']}` 🚫`{orc['vetoed']}`")
+        if orc['vetoed_symbols']:
+            L.append(f"否决: {' '.join('`'+s+'`' for s in orc['vetoed_symbols'][:20])}")
+
+    orders = data.get('orders', [])
+    L.append(f"\n*▸ 📋 执行指令*")
+    if orders:
+        buys = [o for o in orders if o['direction'] == 'BUY']
+        sells = [o for o in orders if o['direction'] == 'SELL']
+        L.append(f"买`{len(buys)}`笔 卖`{len(sells)}`笔 总仓`{data.get('total_weight_pct',0):.1f}%`")
+        for o in orders:
+            icon = "🟢" if o['direction'] == 'BUY' else "🔴"
+            line = f"  {icon}`{o['symbol']}` {o['weight_pct']:+.1f}%"
+            if o['price']: line += f" ${o['price']:.0f}×{o['shares']}股"
+            if o.get('kronos_pred_pct') is not None: line += f" K`{o['kronos_pred_pct']:+.1f}%`"
+            L.append(line)
+        zf = data.get('zero_weight_filtered', 0)
+        if zf > 0: L.append(f"_({zf}只权重0已过滤)_")
     else:
-        L.append("ℹ️ 未初始化")
+        L.append("⚪ 今日无操作")
 
-    # ─ Footer ─
-    L.append("")
-    L.append("_SMA+Momentum+Kronos | Quant MVP_")
+    pf = data.get('portfolio')
+    if pf:
+        L.append(f"\n*▸ 组合*")
+        L.append(f"💰`${pf['nav']:,.0f}` `{pf['cum_return']:+.2f}%` 回撤`{pf['max_dd']:.1f}%`")
+        L.append(f"持仓`{pf['positions']}`只 现金`${pf['cash']:,.0f}`")
 
+    L.append(f"\n_Quant MVP v6.0 | SMA+Momentum+Kronos_")
     return '\n'.join(L)
 
 
@@ -311,8 +387,21 @@ def main():
     )
 
     elapsed = (datetime.now() - start_time).total_seconds()
-    report = build_report(trade_date, elapsed, result.returncode, result.stderr)
 
+    # 1. Collect structured data
+    report_data = collect_report_data(trade_date, elapsed, result.returncode, result.stderr)
+
+    # 2. Try LLM-enhanced report
+    report = generate_llm_report(env, report_data)
+
+    # 3. Fall back to template if LLM fails
+    if not report:
+        report = build_fallback_report(report_data)
+        print("[REPORT] Using fallback template")
+    else:
+        print("[REPORT] Using DeepSeek LLM report")
+
+    # 4. Send to Telegram
     send_telegram(env, report)
     print(report)
     sys.exit(result.returncode)

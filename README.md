@@ -78,6 +78,11 @@ A production-grade quantitative trading system for US equities (S&P 500) nativel
 
 **Key Insight**: LightGBM does NOT predict price direction. It predicts **whether the Base Model's signal will be profitable**.
 
+### v5.1 Multi-Base Models Active
+
+- **多基础信号源**: 在基础的 SMA 双均线基础上，全面接入了 20 日动量突破模型 (Momentum)。
+- **信号互补**: 均线捕捉趋势反转，动量捕捉趋势加速。两路引擎并行执行，共同为 Meta Model (LightGBM) 输送基础买卖信号，提升了策略覆盖度与多样性。
+
 ### v5.0 Phase D/E 核心完工
 
 - **全流程管道打通**: 容错的 `daily_job.py` 日度闭环（数据→特征→信号→风控→报单）。

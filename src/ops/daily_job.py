@@ -315,9 +315,14 @@ class DailyJob:
         base_signals = []
         for sym in features_df['symbol'].unique():
             df_sym = features_df[features_df['symbol'] == sym].copy()
-            # SMA crossover
-            df_sym = BaseModelSMA().generate_signals(df_sym)
-            base_signals.append(df_sym)
+            
+            # SMA crossover model
+            df_sma = BaseModelSMA().generate_signals(df_sym)
+            base_signals.append(df_sma)
+            
+            # Momentum breakout model
+            df_mom = BaseModelMomentum().generate_signals(df_sym)
+            base_signals.append(df_mom)
         df_sig = pd.concat(base_signals, ignore_index=True)
         
         # P0 Fix: Use the LATEST available date, not trade_date

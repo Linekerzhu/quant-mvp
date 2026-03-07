@@ -292,62 +292,70 @@ class DailyJob:
         if len(targets) == 0:
             return "No targets"
             
-        # Spin up Futu connections
-        trd_env = ft.TrdEnv.SIMULATE if self.is_paper or True else ft.TrdEnv.REAL
-        futu_exec = FutuExecutor(trd_env=trd_env)
-        futu_quote = FutuQuote()
+        logger.info("daily_targets_generated", {"targets": targets[['symbol', 'target_weight']].to_dict(orient='records')})
         
-        if not futu_exec.connect() or not futu_quote.connect():
-            raise RuntimeError("Futu OpenAPI Connection Failed")
+        # Spin up Futu connections (make this gracefully fail for paper/log-only execution)
+        try:
+            trd_env = ft.TrdEnv.SIMULATE if self.is_paper or True else ft.TrdEnv.REAL
+            futu_exec = FutuExecutor(trd_env=trd_env)
+            futu_quote = FutuQuote()
             
-        account_value = futu_exec.get_account_value()
-        if account_value <= 0:
-            account_value = 100000.0 # fallback
-            
-        # Quote real-time mid prices
-        symbols = targets['symbol'].tolist()
-        quotes = futu_quote.get_orderbook(symbols)
-        
-        orders = []
-        for _, row in targets.iterrows():
-            sym = row['symbol']
-            weight = row['target_weight']
-            
-            if abs(weight) < 0.001:
-                continue
+            if not futu_exec.connect() or not futu_quote.connect():
+                logger.warn("futu_openapi_skipped", {"reason": "Gateway unreachable. Targets saved to parquet. Log-only execution."})
+                return {"status": "targets_generated_but_not_executed"}
                 
-            qdata = quotes.get(sym, {'mid': 100.0}) # mock mid if missing
-            mid = qdata['mid']
-            side = 'buy' if weight > 0 else 'sell'
-            
-            # Simple dollar conversion
-            target_usd = abs(weight) * account_value
-            qty = int(target_usd / mid)
-            
-            if qty > 0:
-                orders.append({
-                    'symbol': sym,
-                    'qty': qty,
-                    'side': side,
-                    'price': mid, # limit price
-                    'order_type': 'limit'
-                })
+            account_value = futu_exec.get_account_value()
+            if account_value <= 0:
+                account_value = 100000.0 # fallback
                 
-        # Consistency Check
-        consistency = SignalConsistency.verify(targets, orders)
-        if consistency['inconsistencies'] > 0:
-            logger.warn("daily_execution_inconsistency", consistency)
+            # Quote real-time mid prices
+            symbols = targets['symbol'].tolist()
+            quotes = futu_quote.get_orderbook(symbols)
             
-        # Submit Orders
-        if len(orders) > 0:
-            futu_exec.submit_orders(orders)
-            logger.info("submitted_live_orders", {"count": len(orders)})
+            orders = []
+            for _, row in targets.iterrows():
+                sym = row['symbol']
+                weight = row['target_weight']
+                
+                if abs(weight) < 0.001:
+                    continue
+                    
+                qdata = quotes.get(sym, {'mid': 100.0}) # mock mid if missing
+                mid = qdata['mid']
+                side = 'buy' if weight > 0 else 'sell'
+                
+                # Simple dollar conversion
+                target_usd = abs(weight) * account_value
+                qty = int(target_usd / mid)
+                
+                if qty > 0:
+                    orders.append({
+                        'symbol': sym,
+                        'qty': qty,
+                        'side': side,
+                        'price': mid, # limit price
+                        'order_type': 'limit'
+                    })
+                    
+            # Consistency Check
+            consistency = SignalConsistency.verify(targets, orders)
+            if consistency['inconsistencies'] > 0:
+                logger.warn("daily_execution_inconsistency", consistency)
+                
+            # Submit Orders
+            if len(orders) > 0:
+                futu_exec.submit_orders(orders)
+                logger.info("submitted_live_orders", {"count": len(orders)})
+                
+            futu_exec.close()
+            futu_quote.close()
             
-        futu_exec.close()
-        futu_quote.close()
-        
-        return {"orders": len(orders), "value_usd": sum([o['qty']*o['price'] for o in orders])}
+            return {"orders": len(orders), "value_usd": sum([o['qty']*o['price'] for o in orders])}
 
-if __name__ == '__main__':
+        except Exception as e:
+            logger.error("futu_execution_failed", {"error": str(e), "note": "Targets safely written to parquet."})
+            return {"status": "execution_failed", "error": str(e)}
+
+if __name__ == "__main__":
     job = DailyJob()
     job.run()

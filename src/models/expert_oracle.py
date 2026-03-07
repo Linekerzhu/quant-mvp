@@ -57,7 +57,7 @@ class KronosOracleClient:
                 "pred_len": 5
             }
 
-            resp = requests.post(self.endpoint_url, json=payload, timeout=60) # High timeout for cold starts
+            resp = requests.post(self.endpoint_url, json=payload, timeout=120) # High timeout for cold starts
             resp.raise_for_status()
             
             data = resp.json()

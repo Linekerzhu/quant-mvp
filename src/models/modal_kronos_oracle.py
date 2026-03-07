@@ -91,7 +91,7 @@ class KronosService:
             # Generate predictions
             # The signature expects pred_len either positionally or kwarg. We use **kwargs for strict delivery.
             # Signature: (df, x_timestamp, y_timestamp, pred_len, T=1.0, top_k=0, top_p=0.9, sample_count=1, verbose=True)
-            pred_df = self.predictor.predict(x_df, x_timestamp, y_timestamp, req.pred_len, T=10.0, top_k=0, top_p=0.9, sample_count=1, verbose=False)
+            pred_df = self.predictor.predict(x_df, x_timestamp, y_timestamp, req.pred_len, T=1.0, top_k=0, top_p=0.9, sample_count=1, verbose=False)
             
             # Predictor returns pred_df with future OHLC
             future_close = float(pred_df['close'].iloc[-1])

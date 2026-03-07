@@ -233,11 +233,12 @@ class UniverseManager:
         
         # P0-A5: Guard clause for empty DataFrame (first run scenario)
         if df.empty or 'symbol' not in df.columns:
+            # Remove the artificial limit for full production run
             return {
-                'symbols': sorted(base_tickers[:10]),
-                'cold_start': sorted(base_tickers[:10]),
-                'count': min(len(base_tickers), 10),
-                'cold_start_count': min(len(base_tickers), 10),
+                'symbols': sorted(base_tickers),  # Use full S&P 500 universe
+                'cold_start': sorted(base_tickers),
+                'count': len(base_tickers),
+                'cold_start_count': len(base_tickers),
                 'metadata': {
                     'base_tickers': len(base_tickers),
                     'with_data': 0,

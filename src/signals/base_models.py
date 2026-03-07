@@ -26,8 +26,9 @@ class BaseModelSMA(BaseSignalGenerator):
     - -1: Fast SMA < Slow SMA (bearish death cross)
     -  0: Insufficient data (cold start period)
     
-    CRITICAL: Uses shift(1) to prevent look-ahead bias.
-    T-day signals can only use data from T-1 and earlier.
+    IMPORTANT: No shift(1) needed because execution happens at T+1 Open.
+    T-day signals use T-day close prices, which are already known when
+    the system runs after market close. No look-ahead bias.
     """
     
     def __init__(self, fast_window: int = 20, slow_window: int = 60):
@@ -96,7 +97,7 @@ class BaseModelMomentum(BaseSignalGenerator):
     - -1: Negative momentum (price going down)
     -  0: Insufficient data (cold start period)
     
-    CRITICAL: Uses shift(1) to prevent look-ahead bias.
+    IMPORTANT: No shift(1) needed because execution happens at T+1 Open.
     """
     
     def __init__(self, window: int = 20):

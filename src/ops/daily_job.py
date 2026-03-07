@@ -164,6 +164,12 @@ class DailyJob:
                     buy_count = int((targets['target_weight'] > 0).sum())
                     sell_count = int((targets['target_weight'] < 0).sum())
                     
+                    # Calculate NAV once (constant across all target rows)
+                    nav = self.portfolio.state['cash'] + sum(
+                        pos['qty'] * prices.get(s, pos['avg_cost'])
+                        for s, pos in self.portfolio.state['positions'].items()
+                    )
+                    
                     for i, (_, row) in enumerate(targets.head(10).iterrows()):
                         sym = row['symbol']
                         w = row['target_weight']
@@ -172,10 +178,6 @@ class DailyJob:
                         direction = '买' if w > 0 else '卖'
                         
                         if price > 0:
-                            nav = self.portfolio.state['cash'] + sum(
-                                pos['qty'] * prices.get(s, pos['avg_cost'])
-                                for s, pos in self.portfolio.state['positions'].items()
-                            )
                             qty = int(abs(w) * nav / price)
                             report += f"{icon}{direction} {sym} {abs(w)*100:.1f}% ${price:.0f}×{qty}股\n"
                         else:
@@ -361,7 +363,6 @@ class DailyJob:
                 
                 prob = len(wins) / max(len(aligned), 1)
                 avg_win = float(wins.mean()) if len(wins) > 0 else 0.03
-                avg_loss = float(losses.abs().mean()) if len(losses) > 0 else 0.03
                 avg_loss = float(losses.abs().mean()) if len(losses) > 0 else 0.03
             else:
                 prob = 0.50

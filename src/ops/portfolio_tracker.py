@@ -93,6 +93,19 @@ class PortfolioTracker:
             Execution summary dict
         """
         state = self.state
+        
+        # Idempotency guard: skip if already executed for this date
+        for snap in state.get('history', []):
+            if snap.get('date') == trade_date:
+                logger.info("portfolio_skip_duplicate", {"date": trade_date})
+                return {
+                    "trades": 0,
+                    "nav": snap['nav'],
+                    "daily_return": snap['daily_return'],
+                    "total_friction": 0,
+                    "snapshot": snap
+                }
+        
         nav_before = self._calc_nav(prices)
         
         # Calculate target positions in shares
@@ -154,12 +167,11 @@ class PortfolioTracker:
                 continue
                 
             price = prices[sym]
-            trade_value = abs(delta * price)
-            friction_cost = trade_value * self.friction
-            total_friction += friction_cost
 
             if delta > 0:  # Buy
-                cost = delta * price + friction_cost
+                trade_value = delta * price
+                friction_cost = trade_value * self.friction
+                cost = trade_value + friction_cost
                 if cost > state['cash']:
                     # Reduce qty to fit available cash
                     max_affordable = int((state['cash'] / (price * (1 + self.friction))))
@@ -170,6 +182,7 @@ class PortfolioTracker:
                     friction_cost = trade_value * self.friction
                     cost = trade_value + friction_cost
                 
+                total_friction += friction_cost
                 state['cash'] -= cost
                 
                 # Update average cost (includes friction in cost basis)
@@ -198,6 +211,7 @@ class PortfolioTracker:
                 avg_cost = current_positions[sym]['avg_cost']
                 gross_proceeds = sell_qty * price
                 friction_cost = gross_proceeds * self.friction
+                total_friction += friction_cost
                 net_proceeds = gross_proceeds - friction_cost
                 
                 # Realized P&L = (sell_price - avg_cost) * qty - friction

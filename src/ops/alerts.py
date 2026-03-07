@@ -91,13 +91,24 @@ class AlertManager:
 
     @staticmethod
     def _split_message(text: str, max_len: int = 4000) -> list:
-        """Split a long message into chunks at line boundaries."""
+        """Split a long message into chunks at line boundaries.
+        
+        Falls back to hard split if a single line exceeds max_len.
+        """
         if len(text) <= max_len:
             return [text]
         
         chunks = []
         current = ""
         for line in text.split('\n'):
+            # If a single line is longer than max_len, force-split it
+            while len(line) > max_len:
+                if current:
+                    chunks.append(current)
+                    current = ""
+                chunks.append(line[:max_len])
+                line = line[max_len:]
+            
             if len(current) + len(line) + 1 > max_len:
                 if current:
                     chunks.append(current)
@@ -106,5 +117,5 @@ class AlertManager:
                 current = current + '\n' + line if current else line
         if current:
             chunks.append(current)
-        return chunks
+        return chunks if chunks else [text]
 

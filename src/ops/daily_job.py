@@ -229,10 +229,13 @@ class DailyJob:
         if not universe_info['symbols']:
             raise ValueError(f"No symbols in universe for {trade_date}")
             
-        end = pd.Timestamp(trade_date)
-        start = end - timedelta(days=252)  # P0 Fix: 252 calendar days ≈ 180 trading days for SMA(60)+shift(1)
+        end_date = pd.Timestamp(trade_date)
+        start = end_date - pd.Timedelta(days=252)  # P0 Fix: 252 calendar days ≈ 180 trading days
         
-        data = self.ingest.ingest(symbols=universe_info['symbols'], start=start.strftime('%Y-%m-%d'), end=end.strftime('%Y-%m-%d'))
+        # yfinance end date is exclusive, so we add 1 day to fetch today's data (if run after market close)
+        yf_end = end_date + pd.Timedelta(days=1)
+        
+        data = self.ingest.ingest(symbols=universe_info['symbols'], start=start.strftime('%Y-%m-%d'), end=yf_end.strftime('%Y-%m-%d'))
         write_parquet_wap(data, f"data/raw/daily_{trade_date}.parquet")
         return {"rows": len(data), "symbols": data['symbol'].nunique()}
         
@@ -352,12 +355,13 @@ class DailyJob:
                     pd.DataFrame({'date': sym_all['date'], 'fwd_ret': fwd_returns}),
                     on='date', how='left'
                 )
-                aligned = sym_hist_with_ret['fwd_ret'].dropna() * sym_hist_with_ret['side']
+                aligned = (sym_hist_with_ret['fwd_ret'] * sym_hist_with_ret['side']).dropna()
                 wins = aligned[aligned > 0]
                 losses = aligned[aligned < 0]
                 
                 prob = len(wins) / max(len(aligned), 1)
                 avg_win = float(wins.mean()) if len(wins) > 0 else 0.03
+                avg_loss = float(losses.abs().mean()) if len(losses) > 0 else 0.03
                 avg_loss = float(losses.abs().mean()) if len(losses) > 0 else 0.03
             else:
                 prob = 0.50

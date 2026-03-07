@@ -66,10 +66,9 @@ class BaseModelSMA(BaseSignalGenerator):
         
         result = df.copy()
         
-        # CRITICAL: Use shift(1) to prevent look-ahead bias
-        # T-day signal can only use T-1 and earlier data
-        sma_fast = result['adj_close'].shift(1).rolling(self.fast_window).mean()
-        sma_slow = result['adj_close'].shift(1).rolling(self.slow_window).mean()
+        # Calculate SMA on T-day prices (execution is T+1 Open, no lookahead bias)
+        sma_fast = result['adj_close'].rolling(self.fast_window).mean()
+        sma_slow = result['adj_close'].rolling(self.slow_window).mean()
         
         # Generate signals: +1 for bullish, -1 for bearish
         result['side'] = np.where(sma_fast > sma_slow, 1, -1)
@@ -154,8 +153,7 @@ class BaseModelMomentum(BaseSignalGenerator):
         
         result = df.copy()
         
-        # CRITICAL: Use shift(1) to prevent look-ahead bias
-        # Calculate log returns using T-1 data
+        # Calculate log returns using T-day prices (execution is T+1 Open)
         
         # P0 Fix: Handle NaN/Inf in price data
         # Get T-1 price and verify it's valid
@@ -173,7 +171,7 @@ class BaseModelMomentum(BaseSignalGenerator):
         result['returns'] = np.log(result['price_ratio'])
         
         # Accumulate returns
-        returns_nd = result['returns'].shift(1).rolling(self.window).sum()
+        returns_nd = result['returns'].rolling(self.window).sum()
         
         # Generate signals: +1 for positive momentum, -1 for negative
         result['side'] = np.where(returns_nd > 0, 1, -1)

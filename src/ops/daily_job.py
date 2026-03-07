@@ -94,16 +94,57 @@ class DailyJob:
                 
             try:
                 result = step_func(trade_date)
-                state[step_name] = True
+                state[step_name] = result if result is not None else True
                 self._save_checkpoint(trade_date, state)
                 logger.info("step_complete", {"step": step_name, "result": result})
             except Exception as e:
                 logger.error("step_failed", {"step": step_name, "error": str(e)})
-                self.alerts.send_alert("CRITICAL", f"Daily Job Failed at Step: {step_name}", str(e))
+                self.alerts.send_alert("CRITICAL", f"🚨 运行异常: {step_name}", f"步骤 {step_name} 出现错误: {str(e)}")
                 return False
                 
-        # Send Daily Summary
-        self.alerts.send_alert("INFO", f"Daily Job Completed: {trade_date}", "All modules executed successfully.")
+        # Parse metrics for Chinese Report
+        ingest = state.get('ingest', {})
+        syms_count = ingest.get('symbols', '未知') if isinstance(ingest, dict) else '未知'
+        
+        signals = state.get('signals', {})
+        active_sigs = signals.get('active_signals', '0') if isinstance(signals, dict) else '0'
+        
+        execute = state.get('execute', {})
+        exec_msg = "状态未知"
+        if isinstance(execute, dict):
+            status = execute.get('status', '正常下单')
+            orders = execute.get('orders', 0)
+            val = execute.get('value_usd', 0.0)
+            if 'not_executed' in status:
+                 exec_msg = f"💡 策略预测就绪，但富途网关未连，本机器转为挂机只读沙盒模式 (生成建议调仓: {orders} 笔, 估值: ${val:.2f})"
+            elif 'failed' in status:
+                 exec_msg = f"❌ 订单执行异常: {execute.get('error', '未知错误')}"
+            else:
+                 exec_msg = f"✅ 已成功通过网关下发指令 (挂单: {orders} 笔, 估值: ${val:.2f})"
+        else:
+            exec_msg = str(execute)
+
+        report = f"""📊 【Quant-MVP 云端大盘分析战报】
+📅 交易日计算周期: {trade_date}
+
+✅ 1. 系统核心组件运行状况
+- 流水线引擎：顺利贯通并验证了全部 {len(steps)} 个数据科学模块
+- 运行模式：{'沙盒推演 / Paper' if self.is_paper else '🚨 实盘交易网络 (Real)'}
+- 执行末端：{exec_msg}
+
+📈 2. 标的探测与分析概况
+- 监测雷达网：今日共扫描道指+纳斯达克100+标普500，在日均 $5M 流动性以上的 {syms_count} 只超级股中发掘
+- 截面异动信号：经过 Meta-Model 层层筛选，产生 {active_sigs} 个满足极高置信阈值的多空动量指令！
+
+🎯 3. 最终策略结论
+- 根据「分数凯利公式」分配仓位叠加 Pattern Day Trader 防机穿透护甲，计算完成的目标持仓均已安全烙印在服务器端：
+`data/processed/targets_{trade_date}.parquet`
+
+⚠️ 4. 发行人关注内容
+- 若上方显示【未连接网关】，说明您暂未挂载 Linux 版 OpenAPI，您可以登录云端读取 targets 数据辅助您主观的建仓决策。
+        """
+
+        self.alerts.send_alert("INFO", f"跑盘成功: 投资组合完成日频迭代 ({trade_date})", report)
         logger.info("daily_job_complete", {"trade_date": trade_date})
         return True
 

@@ -434,6 +434,10 @@ class DailyJob:
         # 2. Independent Kelly Sizing
         positions = self.sizer.calculate_positions(signals, current_drawdown=0.0) # Mock real DD
         
+        # Merge duplicate symbols (e.g. from both SMA and Momentum models) by summing their weights
+        if not positions.empty:
+            positions = positions.groupby('symbol', as_index=False)['target_weight'].sum()
+        
         # 3. Risk Engine Caps (Single, Sector)
         validated_positions = self.risk.validate_positions(positions)
         

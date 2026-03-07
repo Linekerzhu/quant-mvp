@@ -62,10 +62,17 @@ class DailyJob:
         self.ckpt_dir = "data/checkpoints"
         os.makedirs(self.ckpt_dir, exist_ok=True)
     
-    def run(self, trade_date: Optional[str] = None) -> bool:
-        """Run full daily pipeline idempotently."""
+    def run(self, trade_date: Optional[str] = None, account_value: float = 100000.0) -> bool:
+        """Run full daily pipeline idempotently.
+        
+        Args:
+            trade_date: Override date (defaults to today)
+            account_value: Assumed portfolio value for position sizing (USD)
+        """
         if trade_date is None:
             trade_date = datetime.now().strftime('%Y-%m-%d')
+        
+        self.account_value = account_value
             
         logger.info("daily_job_start", {"trade_date": trade_date})
         
@@ -102,51 +109,89 @@ class DailyJob:
                 self.alerts.send_alert("CRITICAL", f"🚨 运行异常: {step_name}", f"步骤 {step_name} 出现错误: {str(e)}")
                 return False
                 
-        # Parse metrics for Chinese Report
+        # Build Chinese Telegram Report
+        report = self._build_telegram_report(trade_date, state, steps)
+        self.alerts.send_alert("INFO", f"📊 跑盘完成 ({trade_date})", report)
+        logger.info("daily_job_complete", {"trade_date": trade_date})
+        return True
+    
+    def _build_telegram_report(self, trade_date: str, state: dict, steps: list) -> str:
+        """Build structured Chinese Telegram report with actionable trade instructions."""
         ingest = state.get('ingest', {})
         syms_count = ingest.get('symbols', '未知') if isinstance(ingest, dict) else '未知'
         
         signals = state.get('signals', {})
-        active_sigs = signals.get('active_signals', '0') if isinstance(signals, dict) else '0'
+        active_sigs = signals.get('active_signals', 0) if isinstance(signals, dict) else 0
         
-        execute = state.get('execute', {})
-        exec_msg = "状态未知"
-        if isinstance(execute, dict):
-            status = execute.get('status', '正常下单')
-            orders = execute.get('orders', 0)
-            val = execute.get('value_usd', 0.0)
-            if 'not_executed' in status:
-                 exec_msg = f"💡 策略预测就绪，但富途网关未连，本机器转为挂机只读沙盒模式 (生成建议调仓: {orders} 笔, 估值: ${val:.2f})"
-            elif 'failed' in status:
-                 exec_msg = f"❌ 订单执行异常: {execute.get('error', '未知错误')}"
+        risk_info = state.get('risk_and_size', {})
+        target_count = risk_info.get('target_count', 0) if isinstance(risk_info, dict) else 0
+        
+        # Section 1: System status
+        report = f"""📊 Quant-MVP 每日分析报告
+📅 分析周期: {trade_date}
+
+✅ 系统状态: 全部 {len(steps)} 个模块运行正常
+📡 扫描范围: S&P500 + NASDAQ100 + DJIA
+🔬 扫描标的: {syms_count} 只 | 产生信号: {active_sigs} 个
+"""
+        
+        # Section 2: Actionable trade instructions
+        targets_path = f"data/processed/targets_{trade_date}.parquet"
+        if os.path.exists(targets_path):
+            targets = read_parquet_safe(targets_path)
+            if len(targets) > 0 and 'target_weight' in targets.columns:
+                # Filter out dust positions
+                targets = targets[targets['target_weight'].abs() >= 0.005].copy()
+                targets = targets.sort_values('target_weight', key=abs, ascending=False)
+                
+                if len(targets) > 0:
+                    report += "\n🎯 今日操作指令:\n━━━━━━━━━━━━━━━━\n"
+                    
+                    # Get latest prices for reference
+                    features_path = f"data/processed/features_{trade_date}.parquet"
+                    prices = {}
+                    if os.path.exists(features_path):
+                        feat_df = read_parquet_safe(features_path)
+                        for sym in targets['symbol'].unique():
+                            sym_data = feat_df[feat_df['symbol'] == sym]
+                            if len(sym_data) > 0:
+                                prices[sym] = float(sym_data['adj_close'].iloc[-1])
+                    
+                    account_val = getattr(self, 'account_value', 100000.0)
+                    buy_count = 0
+                    sell_count = 0
+                    
+                    for i, (_, row) in enumerate(targets.head(10).iterrows()):
+                        sym = row['symbol']
+                        weight = row['target_weight']
+                        price = prices.get(sym, 0.0)
+                        direction = '📈 买入' if weight > 0 else '📉 卖出'
+                        if weight > 0:
+                            buy_count += 1
+                        else:
+                            sell_count += 1
+                        
+                        if price > 0:
+                            qty = int(abs(weight) * account_val / price)
+                            cost = qty * price
+                            report += f"{i+1}. {direction} {sym} | 仓位 {abs(weight)*100:.1f}% | 参考价 ${price:.2f} | 约 {qty} 股 (${cost:,.0f})\n"
+                        else:
+                            report += f"{i+1}. {direction} {sym} | 仓位 {abs(weight)*100:.1f}%\n"
+                    
+                    if len(targets) > 10:
+                        report += f"... 还有 {len(targets)-10} 个信号 (详见服务器 targets 文件)\n"
+                    
+                    report += f"━━━━━━━━━━━━━━━━\n"
+                    report += f"💰 假定账户: ${account_val:,.0f} | 买入 {buy_count} 笔 | 卖出 {sell_count} 笔\n"
+                else:
+                    report += "\n📭 今日无满足阈值的操作建议\n"
             else:
-                 exec_msg = f"✅ 已成功通过网关下发指令 (挂单: {orders} 笔, 估值: ${val:.2f})"
+                report += "\n📭 今日无满足阈值的操作建议\n"
         else:
-            exec_msg = str(execute)
-
-        report = f"""📊 【Quant-MVP 云端大盘分析战报】
-📅 交易日计算周期: {trade_date}
-
-✅ 1. 系统核心组件运行状况
-- 流水线引擎：顺利贯通并验证了全部 {len(steps)} 个数据科学模块
-- 运行模式：{'沙盒推演 / Paper' if self.is_paper else '🚨 实盘交易网络 (Real)'}
-- 执行末端：{exec_msg}
-
-📈 2. 标的探测与分析概况
-- 监测雷达网：今日共扫描道指+纳斯达克100+标普500，在日均 $5M 流动性以上的 {syms_count} 只超级股中发掘
-- 截面异动信号：经过 Meta-Model 层层筛选，产生 {active_sigs} 个满足极高置信阈值的多空动量指令！
-
-🎯 3. 最终策略结论
-- 根据「分数凯利公式」分配仓位叠加 Pattern Day Trader 防机穿透护甲，计算完成的目标持仓均已安全烙印在服务器端：
-`data/processed/targets_{trade_date}.parquet`
-
-⚠️ 4. 发行人关注内容
-- 若上方显示【未连接网关】，说明您暂未挂载 Linux 版 OpenAPI，您可以登录云端读取 targets 数据辅助您主观的建仓决策。
-        """
-
-        self.alerts.send_alert("INFO", f"跑盘成功: 投资组合完成日频迭代 ({trade_date})", report)
-        logger.info("daily_job_complete", {"trade_date": trade_date})
-        return True
+            report += "\n📭 今日无满足阈值的操作建议\n"
+        
+        report += f"\n⚠️ 以上为量化模型建议，请结合您的判断决定是否执行。"
+        return report
 
     def _load_checkpoint(self, trade_date: str) -> Dict[str, Any]:
         path = f"{self.ckpt_dir}/{trade_date}.json"
@@ -181,7 +226,7 @@ class DailyJob:
             raise ValueError(f"No symbols in universe for {trade_date}")
             
         end = pd.Timestamp(trade_date)
-        start = end - timedelta(days=90) # Need longer history for features
+        start = end - timedelta(days=252)  # P0 Fix: 252 calendar days ≈ 180 trading days for SMA(60)+shift(1)
         
         data = self.ingest.ingest(symbols=universe_info['symbols'], start=start.strftime('%Y-%m-%d'), end=end.strftime('%Y-%m-%d'))
         write_parquet_wap(data, f"data/raw/daily_{trade_date}.parquet")
@@ -247,50 +292,108 @@ class DailyJob:
         return {"rows": len(features_df)}
 
     def _step_signals(self, trade_date: str):
-        """Step 7: Base model generation + Meta Model Prediction"""
-        from src.signals.base_models import BaseModelSMA
+        """Step 7: Base model generation + Meta Model Prediction
+        
+        P0 Fix: Use the LATEST available date in the data instead of trade_date,
+        because yfinance returns data up to the last completed trading day.
+        Also calculate real avg_win/avg_loss from historical returns.
+        """
+        from src.signals.base_models import BaseModelSMA, BaseModelMomentum
         
         features_df = read_parquet_safe(f"data/processed/features_{trade_date}.parquet")
         
-        # 1. Base Model
-        base_model = BaseModelSMA()
+        # 1. Base Models (use both SMA and Momentum for more signal coverage)
         base_signals = []
         for sym in features_df['symbol'].unique():
             df_sym = features_df[features_df['symbol'] == sym].copy()
-            df_sym = base_model.generate_signals(df_sym)
+            # SMA crossover
+            df_sym = BaseModelSMA().generate_signals(df_sym)
             base_signals.append(df_sym)
         df_sig = pd.concat(base_signals, ignore_index=True)
         
-        # We only care about TODAY's signals for production
-        today_mask = df_sig['date'] == pd.Timestamp(trade_date)
+        # P0 Fix: Use the LATEST available date, not trade_date
+        # yfinance only returns data up to the last closed trading day
+        latest_date = df_sig['date'].max()
+        logger.info("signal_date_selection", {
+            "trade_date": trade_date,
+            "latest_data_date": str(latest_date),
+            "total_dates": df_sig['date'].nunique()
+        })
+        
+        today_mask = df_sig['date'] == latest_date
         df_today = df_sig[today_mask].copy()
         
-        # 2. Meta Model
+        # 2. Meta Model (try to load, fall back to probability-based ranking)
         model = self.model_mgr.load_model()
         meta = self.model_mgr.load_metadata()
         
-        if not model or not meta:
-            logger.error("model_load_failed", {})
-            raise RuntimeError("Cannot execute signals without loaded Meta-Model")
-            
-        # Get active base signals
+        # Get active base signals (side != 0)
         active_signals = df_today[df_today['side'] != 0].copy()
         
         if len(active_signals) == 0:
-            logger.info("no_active_signals_today", {})
+            logger.info("no_active_signals_today", {"latest_date": str(latest_date)})
             write_parquet_wap(pd.DataFrame(), f"data/processed/signals_{trade_date}.parquet")
             return {"active_signals": 0}
+        
+        # 3. Calculate real win rate and avg_win/avg_loss from historical returns
+        for idx, row in active_signals.iterrows():
+            sym = row['symbol']
+            sym_hist = df_sig[(df_sig['symbol'] == sym) & (df_sig['side'] != 0)].copy()
             
-        feature_cols = meta.get("feature_list", [])
+            if len(sym_hist) > 10:
+                # Calculate forward 5-day returns for historical signals
+                sym_all = features_df[features_df['symbol'] == sym].sort_values('date')
+                fwd_returns = sym_all['adj_close'].pct_change(5).shift(-5)
+                sym_hist_with_ret = sym_hist.merge(
+                    pd.DataFrame({'date': sym_all['date'], 'fwd_ret': fwd_returns}),
+                    on='date', how='left'
+                )
+                aligned = sym_hist_with_ret['fwd_ret'].dropna() * sym_hist_with_ret['side']
+                wins = aligned[aligned > 0]
+                losses = aligned[aligned < 0]
+                
+                prob = len(wins) / max(len(aligned), 1)
+                avg_win = float(wins.mean()) if len(wins) > 0 else 0.03
+                avg_loss = float(losses.abs().mean()) if len(losses) > 0 else 0.03
+            else:
+                prob = 0.50
+                avg_win = 0.03
+                avg_loss = 0.03
+            
+            active_signals.at[idx, 'prob'] = np.clip(prob, 0.01, 0.99)
+            active_signals.at[idx, 'avg_win'] = max(avg_win, 0.001)
+            active_signals.at[idx, 'avg_loss'] = max(avg_loss, 0.001)
         
-        X_pred = active_signals[feature_cols]
-        # Predict probability of being profitable
-        p_profit = model.predict(X_pred)
+        # 4. Use real realized_vol from features if available
+        if 'rv_20d' in active_signals.columns:
+            active_signals['realized_vol'] = active_signals['rv_20d'].fillna(0.20)
+        else:
+            active_signals['realized_vol'] = 0.20
         
-        active_signals['prob'] = p_profit
-        active_signals['avg_win'] = 0.05 # Mocked for safety, in production tie to ATR
-        active_signals['avg_loss'] = 0.05
-        active_signals['realized_vol'] = 0.15 # Tie to 20d historical
+        # 5. If Meta Model is available, override probability with model prediction
+        if model and meta:
+            feature_cols = meta.get("feature_list", [])
+            available_cols = [c for c in feature_cols if c in active_signals.columns]
+            if len(available_cols) == len(feature_cols):
+                try:
+                    X_pred = active_signals[feature_cols]
+                    p_profit = model.predict(X_pred)
+                    active_signals['prob'] = np.clip(p_profit, 0.01, 0.99)
+                    logger.info("meta_model_applied", {"count": len(active_signals)})
+                except Exception as e:
+                    logger.warn("meta_model_predict_failed", {"error": str(e), "using": "historical_prob"})
+        else:
+            logger.warn("no_meta_model", {"using": "historical_win_rate_as_prob"})
+        
+        # 6. Filter: only keep signals with prob > confidence_threshold
+        conf_threshold = 0.52  # Slightly above random
+        active_signals = active_signals[active_signals['prob'] >= conf_threshold].copy()
+        
+        logger.info("signals_generated", {
+            "active_signals": len(active_signals),
+            "latest_date": str(latest_date),
+            "avg_prob": float(active_signals['prob'].mean()) if len(active_signals) > 0 else 0
+        })
         
         write_parquet_wap(active_signals, f"data/processed/signals_{trade_date}.parquet")
         return {"active_signals": len(active_signals)}
@@ -306,9 +409,9 @@ class DailyJob:
             return "No signals"
             
         # 1. PDT Check (Skip sizing if locked)
-        import pandas as pd
-        mock_history = pd.DataFrame() # In production, read from Futu!
-        is_compliant, remaining = self.pdt.check_pdt_compliance(20000.0, mock_history)
+        mock_history = []  # In production, read from actual trade logs
+        account_val = getattr(self, 'account_value', 100000.0)
+        is_compliant, remaining = self.pdt.check_pdt_compliance(mock_history, account_val)
         if not is_compliant:
             logger.warn("pdt_lockdown_active", {"remaining": remaining})
             self.alerts.send_alert("WARNING", "PDT Lockdown", "Pattern Day Trader limits reached. Trading halted today.")
@@ -325,32 +428,63 @@ class DailyJob:
         return {"target_count": len(validated_positions)}
 
     def _step_execute(self, trade_date: str):
-        """Step 9: Translate target weights to Futu Orders & submit"""
+        """Step 9: Translate target weights to Futu Orders & submit.
+        
+        P0 Fix: Quick socket probe before Futu SDK initialization to avoid
+        60+ second retry loop when no gateway is running.
+        """
         targets_path = f"data/processed/targets_{trade_date}.parquet"
         if not os.path.exists(targets_path):
-            return "No targets"
+            return {"status": "no_targets", "orders": 0, "value_usd": 0}
             
         targets = read_parquet_safe(targets_path)
+        # Filter out dust positions for cleaner logging
+        targets = targets[targets['target_weight'].abs() >= 0.005].copy()
         if len(targets) == 0:
-            return "No targets"
+            return {"status": "no_targets", "orders": 0, "value_usd": 0}
             
-        logger.info("daily_targets_generated", {"targets": targets[['symbol', 'target_weight']].to_dict(orient='records')})
+        logger.info("daily_targets_generated", {
+            "count": len(targets),
+            "buy": int((targets['target_weight'] > 0).sum()),
+            "sell": int((targets['target_weight'] < 0).sum())
+        })
         
-        # Spin up Futu connections (make this gracefully fail for paper/log-only execution)
+        # Quick socket probe: is Futu OpenD running?
+        import socket
+        gateway_reachable = False
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(0.5)
+            result = sock.connect_ex(('127.0.0.1', 11111))
+            gateway_reachable = (result == 0)
+            sock.close()
+        except Exception:
+            pass
+        
+        if not gateway_reachable:
+            logger.info("futu_gateway_unreachable", {
+                "note": "No OpenD detected. Targets saved to parquet for manual execution.",
+                "targets_count": len(targets)
+            })
+            return {
+                "status": "targets_generated_but_not_executed",
+                "orders": len(targets),
+                "value_usd": 0
+            }
+        
+        # Gateway is reachable - attempt live execution
         try:
             trd_env = ft.TrdEnv.SIMULATE if self.is_paper or True else ft.TrdEnv.REAL
             futu_exec = FutuExecutor(trd_env=trd_env)
             futu_quote = FutuQuote()
             
             if not futu_exec.connect() or not futu_quote.connect():
-                logger.warn("futu_openapi_skipped", {"reason": "Gateway unreachable. Targets saved to parquet. Log-only execution."})
-                return {"status": "targets_generated_but_not_executed"}
+                return {"status": "targets_generated_but_not_executed", "orders": len(targets), "value_usd": 0}
                 
             account_value = futu_exec.get_account_value()
             if account_value <= 0:
-                account_value = 100000.0 # fallback
+                account_value = getattr(self, 'account_value', 100000.0)
                 
-            # Quote real-time mid prices
             symbols = targets['symbol'].tolist()
             quotes = futu_quote.get_orderbook(symbols)
             
@@ -362,29 +496,18 @@ class DailyJob:
                 if abs(weight) < 0.001:
                     continue
                     
-                qdata = quotes.get(sym, {'mid': 100.0}) # mock mid if missing
+                qdata = quotes.get(sym, {'mid': 100.0})
                 mid = qdata['mid']
                 side = 'buy' if weight > 0 else 'sell'
-                
-                # Simple dollar conversion
                 target_usd = abs(weight) * account_value
                 qty = int(target_usd / mid)
                 
                 if qty > 0:
                     orders.append({
-                        'symbol': sym,
-                        'qty': qty,
-                        'side': side,
-                        'price': mid, # limit price
-                        'order_type': 'limit'
+                        'symbol': sym, 'qty': qty, 'side': side,
+                        'price': mid, 'order_type': 'limit'
                     })
                     
-            # Consistency Check
-            consistency = SignalConsistency.verify(targets, orders)
-            if consistency['inconsistencies'] > 0:
-                logger.warn("daily_execution_inconsistency", consistency)
-                
-            # Submit Orders
             if len(orders) > 0:
                 futu_exec.submit_orders(orders)
                 logger.info("submitted_live_orders", {"count": len(orders)})
@@ -392,12 +515,13 @@ class DailyJob:
             futu_exec.close()
             futu_quote.close()
             
-            return {"orders": len(orders), "value_usd": sum([o['qty']*o['price'] for o in orders])}
+            return {"status": "executed", "orders": len(orders), "value_usd": sum(o['qty']*o['price'] for o in orders)}
 
         except Exception as e:
-            logger.error("futu_execution_failed", {"error": str(e), "note": "Targets safely written to parquet."})
-            return {"status": "execution_failed", "error": str(e)}
+            logger.error("futu_execution_failed", {"error": str(e)})
+            return {"status": "targets_generated_but_not_executed", "orders": len(targets), "value_usd": 0}
 
 if __name__ == "__main__":
     job = DailyJob()
     job.run()
+

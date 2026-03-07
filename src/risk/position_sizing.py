@@ -70,10 +70,13 @@ class IndependentKellySizer:
                 results.append({'symbol': symbol, 'target_weight': 0.0})
                 continue
                 
-            p = row.get('prob', 0.5)
+            p = float(row.get('prob', 0.5))
             # Apply Kelly formula
-            if 'avg_win' in row and 'avg_loss' in row and row['avg_loss'] > 0 and row['avg_win'] > 0:
-                raw_kelly = self.calculate_kelly_fraction(p, row['avg_win'], row['avg_loss'])
+            avg_win_val = float(row.get('avg_win', 0.0)) if 'avg_win' in row.index else 0.0
+            avg_loss_val = float(row.get('avg_loss', 0.0)) if 'avg_loss' in row.index else 0.0
+            
+            if avg_win_val > 0 and avg_loss_val > 0:
+                raw_kelly = self.calculate_kelly_fraction(p, avg_win_val, avg_loss_val)
             else:
                 # If historical win/loss stats are missing, fallback to simple probability mapping
                 logger.debug(f"Missing win/loss stats for {symbol}, falling back to half Kelly of simple prob logic")
@@ -89,8 +92,8 @@ class IndependentKellySizer:
                 f_weight *= conf_multiplier
                 
             # 3. Volatility scaling
-            if self.scales.get('volatility', True) and 'realized_vol' in row:
-                r_vol = row['realized_vol']
+            if self.scales.get('volatility', True) and 'realized_vol' in row.index:
+                r_vol = float(row['realized_vol'])
                 if r_vol > 0:
                     vol_multiplier = self.vol_target / r_vol
                     f_weight *= vol_multiplier

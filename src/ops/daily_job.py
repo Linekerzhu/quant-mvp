@@ -22,6 +22,7 @@ from src.data.universe import UniverseManager
 from src.data.wap_utils import write_parquet_wap, read_parquet_safe
 from src.ops.event_logger import get_logger
 from src.ops.alerts import AlertManager
+from src.ops.portfolio_tracker import PortfolioTracker
 
 # Import execution and modeling modules
 from src.features.build_features import FeatureEngineer
@@ -56,6 +57,7 @@ class DailyJob:
         self.sizer = IndependentKellySizer()
         self.risk = RiskEngine()
         self.pdt = PDTGuard()
+        self.portfolio = PortfolioTracker(initial_cash=100000.0, friction=0.002)
         self.is_paper = True
         
         # Checkpoint dir
@@ -87,7 +89,8 @@ class DailyJob:
             ("features", self._step_features),
             ("signals", self._step_signals),
             ("risk_and_size", self._step_risk_and_size),
-            ("execute", self._step_execute)
+            ("execute", self._step_execute),
+            ("virtual_portfolio", self._step_virtual_portfolio)
         ]
         
         # Check PnL / account limits to break early if KillSwitch active
@@ -109,11 +112,23 @@ class DailyJob:
                 self.alerts.send_alert("CRITICAL", f"🚨 运行异常: {step_name}", f"步骤 {step_name} 出现错误: {str(e)}")
                 return False
                 
-        # Build Chinese Telegram Report
+        # Build Chinese Telegram Report with portfolio status
         report = self._build_telegram_report(trade_date, state, steps)
         self.alerts.send_alert("INFO", f"📊 跑盘完成 ({trade_date})", report)
         logger.info("daily_job_complete", {"trade_date": trade_date})
         return True
+    
+    def _get_latest_prices(self, trade_date: str) -> dict:
+        """Get latest prices from features file."""
+        prices = {}
+        features_path = f"data/processed/features_{trade_date}.parquet"
+        if os.path.exists(features_path):
+            feat_df = read_parquet_safe(features_path)
+            for sym in feat_df['symbol'].unique():
+                sym_data = feat_df[feat_df['symbol'] == sym]
+                if len(sym_data) > 0:
+                    prices[sym] = float(sym_data['adj_close'].iloc[-1])
+        return prices
     
     def _build_telegram_report(self, trade_date: str, state: dict, steps: list) -> str:
         """Build structured Chinese Telegram report with actionable trade instructions."""
@@ -131,66 +146,55 @@ class DailyJob:
 📅 分析周期: {trade_date}
 
 ✅ 系统状态: 全部 {len(steps)} 个模块运行正常
-📡 扫描范围: S&P500 + NASDAQ100 + DJIA
-🔬 扫描标的: {syms_count} 只 | 产生信号: {active_sigs} 个
+📡 扫描: S&P500+NASDAQ100+DJIA
+🔬 标的: {syms_count} 只 | 信号: {active_sigs} 个
 """
-        
         # Section 2: Actionable trade instructions
         targets_path = f"data/processed/targets_{trade_date}.parquet"
+        prices = self._get_latest_prices(trade_date)
+        
         if os.path.exists(targets_path):
             targets = read_parquet_safe(targets_path)
             if len(targets) > 0 and 'target_weight' in targets.columns:
-                # Filter out dust positions
                 targets = targets[targets['target_weight'].abs() >= 0.005].copy()
                 targets = targets.sort_values('target_weight', key=abs, ascending=False)
                 
                 if len(targets) > 0:
-                    report += "\n🎯 今日操作指令:\n━━━━━━━━━━━━━━━━\n"
-                    
-                    # Get latest prices for reference
-                    features_path = f"data/processed/features_{trade_date}.parquet"
-                    prices = {}
-                    if os.path.exists(features_path):
-                        feat_df = read_parquet_safe(features_path)
-                        for sym in targets['symbol'].unique():
-                            sym_data = feat_df[feat_df['symbol'] == sym]
-                            if len(sym_data) > 0:
-                                prices[sym] = float(sym_data['adj_close'].iloc[-1])
-                    
-                    account_val = getattr(self, 'account_value', 100000.0)
-                    buy_count = 0
-                    sell_count = 0
+                    report += "\n🎯 今日操作指令:\n"
+                    buy_count = int((targets['target_weight'] > 0).sum())
+                    sell_count = int((targets['target_weight'] < 0).sum())
                     
                     for i, (_, row) in enumerate(targets.head(10).iterrows()):
                         sym = row['symbol']
-                        weight = row['target_weight']
+                        w = row['target_weight']
                         price = prices.get(sym, 0.0)
-                        direction = '📈 买入' if weight > 0 else '📉 卖出'
-                        if weight > 0:
-                            buy_count += 1
-                        else:
-                            sell_count += 1
+                        icon = '📈' if w > 0 else '📉'
+                        direction = '买' if w > 0 else '卖'
                         
                         if price > 0:
-                            qty = int(abs(weight) * account_val / price)
-                            cost = qty * price
-                            report += f"{i+1}. {direction} {sym} | 仓位 {abs(weight)*100:.1f}% | 参考价 ${price:.2f} | 约 {qty} 股 (${cost:,.0f})\n"
+                            nav = self.portfolio.state['cash'] + sum(
+                                pos['qty'] * prices.get(s, pos['avg_cost'])
+                                for s, pos in self.portfolio.state['positions'].items()
+                            )
+                            qty = int(abs(w) * nav / price)
+                            report += f"{icon}{direction} {sym} {abs(w)*100:.1f}% ${price:.0f}×{qty}股\n"
                         else:
-                            report += f"{i+1}. {direction} {sym} | 仓位 {abs(weight)*100:.1f}%\n"
+                            report += f"{icon}{direction} {sym} {abs(w)*100:.1f}%\n"
                     
                     if len(targets) > 10:
-                        report += f"... 还有 {len(targets)-10} 个信号 (详见服务器 targets 文件)\n"
-                    
-                    report += f"━━━━━━━━━━━━━━━━\n"
-                    report += f"💰 假定账户: ${account_val:,.0f} | 买入 {buy_count} 笔 | 卖出 {sell_count} 笔\n"
+                        report += f"  +{len(targets)-10}个...\n"
+                    report += f"买{buy_count}笔 卖{sell_count}笔\n"
                 else:
-                    report += "\n📭 今日无满足阈值的操作建议\n"
+                    report += "\n📭 今日无操作建议\n"
             else:
-                report += "\n📭 今日无满足阈值的操作建议\n"
+                report += "\n📭 今日无操作建议\n"
         else:
-            report += "\n📭 今日无满足阈值的操作建议\n"
+            report += "\n📭 今日无操作建议\n"
         
-        report += f"\n⚠️ 以上为量化模型建议，请结合您的判断决定是否执行。"
+        # Section 3: Portfolio status
+        report += "\n" + self.portfolio.get_portfolio_report(prices)
+        
+        report += "\n⚠️ 以上为模型建议+虚拟盘跟踪结果"
         return report
 
     def _load_checkpoint(self, trade_date: str) -> Dict[str, Any]:
@@ -426,6 +430,44 @@ class DailyJob:
         # Write final targets
         write_parquet_wap(validated_positions, f"data/processed/targets_{trade_date}.parquet")
         return {"target_count": len(validated_positions)}
+
+    def _step_virtual_portfolio(self, trade_date: str):
+        """Step 9a: Execute targets against virtual portfolio (with 0.2% friction)."""
+        targets_path = f"data/processed/targets_{trade_date}.parquet"
+        if not os.path.exists(targets_path):
+            return {"status": "no_targets"}
+            
+        targets_df = read_parquet_safe(targets_path)
+        if len(targets_df) == 0 or 'target_weight' not in targets_df.columns:
+            return {"status": "no_targets"}
+        
+        # Get prices
+        prices = self._get_latest_prices(trade_date)
+        if not prices:
+            return {"status": "no_prices"}
+        
+        # Build targets dict {symbol: weight}
+        targets_dict = {}
+        for _, row in targets_df.iterrows():
+            sym = row['symbol']
+            w = float(row['target_weight'])
+            if abs(w) >= 0.005 and sym in prices:
+                targets_dict[sym] = w
+        
+        if not targets_dict:
+            return {"status": "no_valid_targets"}
+        
+        # Execute against virtual portfolio
+        result = self.portfolio.execute_targets(targets_dict, prices, trade_date)
+        
+        snap = result.get('snapshot', {})
+        return {
+            "trades": result['trades'],
+            "nav": round(snap.get('nav', 0), 2),
+            "cumulative_pnl": round(snap.get('cumulative_pnl', 0), 2),
+            "cumulative_return": f"{snap.get('cumulative_return', 0)*100:.2f}%",
+            "friction_today": round(result['total_friction'], 2)
+        }
 
     def _step_execute(self, trade_date: str):
         """Step 9: Translate target weights to Futu Orders & submit.

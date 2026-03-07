@@ -34,20 +34,34 @@ class AlertManager:
         """
         success = False
         
-        # 1. Telegram Alert
+        # 1. Telegram Alert (with chunked sending for long messages)
         if self.telegram_token and self.telegram_chat_id:
             try:
                 url = f"https://api.telegram.org/bot{self.telegram_token}/sendMessage"
-                payload = {
-                    "chat_id": self.telegram_chat_id,
-                    "text": f"[{level}] {title}\n\n{message}"
-                }
-                resp = requests.post(url, json=payload, timeout=10)
-                if resp.status_code == 200:
-                    logger.info("telegram_alert_sent", {"level": level, "title": title})
+                full_text = f"[{level}] {title}\n\n{message}"
+                
+                # Telegram API limit is 4096 chars; split into chunks
+                chunks = self._split_message(full_text, max_len=4000)
+                all_sent = True
+                
+                for i, chunk in enumerate(chunks):
+                    payload = {
+                        "chat_id": self.telegram_chat_id,
+                        "text": chunk
+                    }
+                    resp = requests.post(url, json=payload, timeout=10)
+                    if resp.status_code != 200:
+                        logger.error("telegram_chunk_failed", {
+                            "chunk": i+1, "total": len(chunks),
+                            "status": resp.status_code
+                        })
+                        all_sent = False
+                
+                if all_sent:
+                    logger.info("telegram_alert_sent", {
+                        "level": level, "title": title, "chunks": len(chunks)
+                    })
                     success = True
-                else:
-                    logger.error("telegram_alert_failed", {"status": resp.status_code, "text": resp.text})
             except Exception as e:
                 logger.error("telegram_alert_exception", {"error": str(e)})
                 
@@ -74,3 +88,23 @@ class AlertManager:
             logger.warn("alert_skipped_no_config", {"title": title})
             
         return success
+
+    @staticmethod
+    def _split_message(text: str, max_len: int = 4000) -> list:
+        """Split a long message into chunks at line boundaries."""
+        if len(text) <= max_len:
+            return [text]
+        
+        chunks = []
+        current = ""
+        for line in text.split('\n'):
+            if len(current) + len(line) + 1 > max_len:
+                if current:
+                    chunks.append(current)
+                current = line
+            else:
+                current = current + '\n' + line if current else line
+        if current:
+            chunks.append(current)
+        return chunks
+

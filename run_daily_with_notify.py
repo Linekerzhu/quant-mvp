@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """
-Daily Job Runner with LLM-Enhanced Telegram Notification
+Daily Job Runner with LLM-Enhanced Telegram Notification (v3 — Decision-Story)
 
-Runs daily_job.py, collects structured results, sends them to DeepSeek LLM
-for professional report generation, then delivers to Telegram.
-Falls back to template report if LLM unavailable.
+Runs daily_job.py, collects each surviving stock's full decision path,
+sends to DeepSeek LLM to narrate WHY each stock was chosen.
 """
 
 import os
@@ -47,8 +46,8 @@ def send_telegram(env, message, parse_mode="Markdown"):
             }, timeout=10)
             if not resp.ok:
                 print(f"Telegram fail: {resp.status_code} {resp.text[:200]}")
-                # If Markdown parse fails, retry without parse_mode
-                if resp.status_code == 400 and "parse" in resp.text.lower():
+                # Retry without Markdown if parse error
+                if resp.status_code == 400:
                     requests.post(url, json={"chat_id": chat_id, "text": chunk}, timeout=10)
                 ok = False
         except Exception as e:
@@ -83,14 +82,12 @@ def read_signals(trade_date):
         return df if len(df) > 0 else None
     return None
 
-
 def read_targets(trade_date):
     path = os.path.join(PROJECT_ROOT, f'data/processed/targets_{trade_date}.parquet')
     if os.path.exists(path):
         df = pd.read_parquet(path)
         return df if len(df) > 0 else None
     return None
-
 
 def read_portfolio_summary():
     path = os.path.join(PROJECT_ROOT, 'data/portfolio/state.json')
@@ -120,7 +117,6 @@ def read_portfolio_summary():
         'cash': state.get('cash', 0),
     }
 
-
 def get_latest_prices(trade_date):
     path = os.path.join(PROJECT_ROOT, f'data/processed/features_{trade_date}.parquet')
     if not os.path.exists(path):
@@ -138,7 +134,6 @@ def get_latest_prices(trade_date):
                         break
     return prices
 
-
 def get_universe_count(trade_date):
     path = os.path.join(PROJECT_ROOT, f'data/processed/final_daily_{trade_date}.parquet')
     if os.path.exists(path):
@@ -147,10 +142,10 @@ def get_universe_count(trade_date):
     return None
 
 
-# ── Collect Structured Data ─────────────────────────────
+# ── Collect Decision-Story Data ─────────────────────────
 
 def collect_report_data(trade_date, elapsed, returncode, stderr):
-    """Collect all pipeline data into a structured dict for LLM consumption."""
+    """Collect data with full decision path for each surviving stock."""
 
     data = {
         "date": trade_date,
@@ -164,84 +159,112 @@ def collect_report_data(trade_date, elapsed, returncode, stderr):
 
     data["universe_count"] = get_universe_count(trade_date)
 
-    # Signals
     signals_df = read_signals(trade_date)
-    if signals_df is not None and len(signals_df) > 0:
-        buys = signals_df[signals_df['side'] > 0]
-        sells = signals_df[signals_df['side'] < 0]
-        avg_prob = float(signals_df['prob'].mean()) * 100 if 'prob' in signals_df.columns else 0
-
-        top_buys = buys.sort_values('prob', ascending=False).head(5)['symbol'].tolist() if 'prob' in buys.columns and len(buys) > 0 else []
-        top_sells = sells.sort_values('prob', ascending=False).head(5)['symbol'].tolist() if 'prob' in sells.columns and len(sells) > 0 else []
-
-        data["signals"] = {
-            "buy_count": len(buys),
-            "sell_count": len(sells),
-            "avg_confidence": round(avg_prob, 1),
-            "top_buys": top_buys,
-            "top_sells": top_sells,
-        }
-    else:
-        data["signals"] = None
-
-    # Targets & Oracle
     targets_df = read_targets(trade_date)
     prices = get_latest_prices(trade_date)
     perf = read_portfolio_summary()
     nav = perf['nav'] if perf else 100000
 
-    if targets_df is not None and len(targets_df) > 0 and 'target_weight' in targets_df.columns:
-        # Oracle stats
-        has_oracle = 'oracle_action' in targets_df.columns
-        oracle_info = None
-        vetoed_syms = []
-        if has_oracle:
-            approved = targets_df[targets_df['oracle_action'] == 'approve']
-            neutral = targets_df[targets_df['oracle_action'] == 'neutral']
-            if signals_df is not None:
-                signal_syms = set(signals_df['symbol'].unique())
-                target_syms = set(targets_df['symbol'].unique())
-                vetoed_syms = sorted(signal_syms - target_syms)
-            oracle_info = {
-                "approved": len(approved),
-                "neutral": len(neutral),
-                "vetoed": len(vetoed_syms),
-                "vetoed_symbols": vetoed_syms,
-            }
+    # ── Pipeline funnel summary (just counts, no stock lists) ──
+    funnel = {}
+    if signals_df is not None and len(signals_df) > 0:
+        total_sigs = len(signals_df)
+        unique_syms = signals_df['symbol'].nunique()
+        buy_sigs = len(signals_df[signals_df['side'] > 0])
+        sell_sigs = len(signals_df[signals_df['side'] < 0])
 
-        # Actionable orders (filter zero-weight)
+        # Count conflicting symbols (both buy+sell from dual model)
+        conflict_count = 0
+        for sym in signals_df['symbol'].unique():
+            sides = signals_df[signals_df['symbol'] == sym]['side'].unique()
+            if 1 in sides and -1 in sides:
+                conflict_count += 1
+
+        funnel["total_signals"] = total_sigs
+        funnel["unique_symbols_with_signals"] = unique_syms
+        funnel["buy_signals"] = buy_sigs
+        funnel["sell_signals"] = sell_sigs
+        funnel["dual_model_conflicts"] = conflict_count
+
+    oracle_vetoed = 0
+    if targets_df is not None and 'oracle_action' in targets_df.columns:
+        if signals_df is not None:
+            signal_syms = set(signals_df['symbol'].unique())
+            target_syms = set(targets_df['symbol'].unique())
+            oracle_vetoed = len(signal_syms - target_syms)
+    funnel["oracle_vetoed"] = oracle_vetoed
+
+    zero_weight = 0
+    actionable_count = 0
+    if targets_df is not None and 'target_weight' in targets_df.columns:
+        actionable_count = int((targets_df['target_weight'].abs() >= 0.005).sum())
+        zero_weight = len(targets_df) - actionable_count
+    funnel["zero_weight_filtered"] = zero_weight
+    funnel["final_actionable"] = actionable_count
+
+    data["funnel"] = funnel
+
+    # ── Decision story per surviving stock ──
+    orders = []
+    if targets_df is not None and 'target_weight' in targets_df.columns:
         actionable = targets_df[targets_df['target_weight'].abs() >= 0.005].copy()
         actionable = actionable.sort_values('target_weight', key=abs, ascending=False)
-        zero_filtered = len(targets_df) - len(actionable)
+        has_oracle = 'oracle_action' in targets_df.columns
 
-        orders = []
         for _, r in actionable.iterrows():
             sym = r['symbol']
             w = float(r['target_weight'])
             price = prices.get(sym, 0)
             qty = int(abs(w) * nav / price) if price > 0 else 0
-            oracle_pred = float(r.get('oracle_pred_ret', 0)) * 100 if has_oracle and 'oracle_pred_ret' in r.index else None
+
+            # Trace back: what did the dual models say about this stock?
+            signal_detail = None
+            if signals_df is not None:
+                sym_sigs = signals_df[signals_df['symbol'] == sym]
+                if len(sym_sigs) > 0:
+                    sides = sym_sigs['side'].tolist()
+                    prob = float(sym_sigs['prob'].iloc[0]) if 'prob' in sym_sigs.columns else None
+                    rv = float(sym_sigs['realized_vol'].iloc[0]) if 'realized_vol' in sym_sigs.columns else None
+                    aw = float(sym_sigs['avg_win'].iloc[0]) if 'avg_win' in sym_sigs.columns else None
+                    al = float(sym_sigs['avg_loss'].iloc[0]) if 'avg_loss' in sym_sigs.columns else None
+
+                    if len(sides) == 2 and sides[0] == sides[1]:
+                        model_agreement = "both_agree"
+                    elif len(sides) == 2 and sides[0] != sides[1]:
+                        model_agreement = "conflict"
+                    else:
+                        model_agreement = "single"
+
+                    signal_detail = {
+                        "confidence_pct": round(prob * 100, 1) if prob else None,
+                        "volatility": round(rv, 4) if rv else None,
+                        "avg_win_pct": round(aw * 100, 2) if aw else None,
+                        "avg_loss_pct": round(al * 100, 2) if al else None,
+                        "model_agreement": model_agreement,
+                        "signal_direction": "buy" if sides[0] > 0 else "sell",
+                    }
+
+            # Oracle verdict for this stock
+            oracle_detail = None
+            if has_oracle:
+                oracle_action = r.get('oracle_action', 'N/A')
+                oracle_pred = float(r.get('oracle_pred_ret', 0)) * 100
+                oracle_detail = {
+                    "action": oracle_action,
+                    "predicted_return_pct": round(oracle_pred, 1),
+                }
 
             orders.append({
                 "symbol": sym,
                 "direction": "BUY" if w > 0 else "SELL",
                 "weight_pct": round(w * 100, 2),
-                "price": round(price, 2) if price > 0 else None,
+                "price_usd": round(price, 2) if price > 0 else None,
                 "shares": qty,
-                "kronos_pred_pct": round(oracle_pred, 1) if oracle_pred is not None else None,
+                "signal": signal_detail,
+                "oracle": oracle_detail,
             })
 
-        data["oracle"] = oracle_info
-        data["orders"] = orders
-        data["zero_weight_filtered"] = zero_filtered
-        data["total_weight_pct"] = round(actionable['target_weight'].sum() * 100, 1)
-    else:
-        data["oracle"] = None
-        data["orders"] = []
-        data["zero_weight_filtered"] = 0
-        data["total_weight_pct"] = 0
-
-    # Portfolio
+    data["orders"] = orders
     data["portfolio"] = perf
 
     return data
@@ -249,36 +272,54 @@ def collect_report_data(trade_date, elapsed, returncode, stderr):
 
 # ── DeepSeek LLM Report ────────────────────────────────
 
-REPORT_PROMPT = """你是一个量化交易系统的日报生成器。请根据以下JSON数据，生成一份简洁、专业且适合在**Telegram手机端**阅读的每日交易报告。
+REPORT_PROMPT = """你是一个量化交易系统的日报生成器。基于下方JSON数据生成Telegram日报。
 
-规则：
-1. 使用Telegram Markdown格式（*粗体*、`代码`、_斜体_）
-2. 手机屏幕小，每行不超过35个字符，不要用长横线
-3. 报告必须包含以下板块，用emoji标题分隔：
-   - 📊 系统概况（一行：日期+状态+耗时）
-   - 🧠 双模型信号（SMA+Momentum生成的买卖信号概况）
-   - 🔮 Kronos专家审查（批准/否决数，列出所有被否决的股票代码）
-   - 📋 执行指令（最重要板块！每笔订单必须写清：买/卖+股票代码+仓位比例+价格+股数；如果Kronos有预测，附上预测回报）
-   - 💼 组合绩效（净值+回报+回撤+持仓数+现金）
-4. 不要遗漏任何一笔订单！每一笔都要展示
-5. 如果订单为空，写"今日无操作"
-6. 末尾签名：_Quant MVP v6.0 | SMA+Momentum+Kronos_
-7. 总长度控制在Telegram单条消息限制内（<4000字符）
-8. 语言：中文为主，股票代码和数字用英文
+**核心原则：以最终入选的每只股票为叙事主线，讲清楚"它为什么被选中"。**
+
+要求：
+1. Telegram Markdown格式（*粗体*、`代码`、_斜体_）
+2. 手机端友好（每行≤35字符，无长横线）
+3. 结构：
+
+📊 *系统概况* （一行：日期+状态+耗时）
+
+🔻 *决策漏斗*
+用一句话概括筛选过程：
+"{universe}只股票→{signals}个信号→{conflicts}只双模型冲突抵消→{oracle_vetoed}只被Kronos否决→{zero_weight}只仓位过小→最终{final}只入选"
+
+📋 *操作指令及选股理由*
+这是报告最核心的部分。对每笔订单：
+- 写出精确指令：方向+代码+价格+股数
+- 用1-2句话解释选中原因，需包含：
+  · 双模型是否一致看好/看空
+  · 置信度和波动率特征
+  · Kronos专家的态度和预测
+  · 为什么它能通过仓位筛选（如低波动率等）
+- 每笔指令之间空行分隔
+
+如果没有操作，写"今日无操作——所有候选均未通过筛选"并简要说明原因。
+
+💼 *组合状态* 净值+累计回报+回撤+现金（紧凑一行）
+
+签名：_Quant MVP v6.0 | SMA+Momentum+Kronos_
+
+注意：
+- 不要罗列被淘汰的股票列表！只在漏斗概述中给出被淘汰的数量即可
+- 重点是讲故事：为什么最终选中的这几只能突围
+- 总字符数<3500
 
 JSON数据：
 ```json
 {data_json}
 ```
 
-直接输出报告内容，不要输出任何解释或开头语。"""
+直接输出报告内容。"""
 
 
 def generate_llm_report(env, report_data):
-    """Call DeepSeek to generate a polished Telegram report."""
+    """Call DeepSeek to generate a decision-story report."""
     api_key = env.get('DEEPSEEK_API_KEY', '')
     if not api_key:
-        print("[LLM] No DEEPSEEK_API_KEY, falling back to template")
         return None
 
     data_json = json.dumps(report_data, ensure_ascii=False, indent=2)
@@ -287,10 +328,7 @@ def generate_llm_report(env, report_data):
     try:
         resp = requests.post(
             "https://api.deepseek.com/chat/completions",
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json"
-            },
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
             json={
                 "model": "deepseek-chat",
                 "messages": [{"role": "user", "content": prompt}],
@@ -300,71 +338,52 @@ def generate_llm_report(env, report_data):
             timeout=30,
         )
         resp.raise_for_status()
-        result = resp.json()
-        content = result['choices'][0]['message']['content'].strip()
-
-        # Strip markdown code fences if LLM wraps output
+        content = resp.json()['choices'][0]['message']['content'].strip()
         if content.startswith("```"):
             lines = content.split('\n')
             content = '\n'.join(lines[1:-1] if lines[-1].strip() == '```' else lines[1:])
-
         print(f"[LLM] DeepSeek returned {len(content)} chars")
         return content
-
     except Exception as e:
         print(f"[LLM] DeepSeek failed: {e}")
         return None
 
 
-# ── Fallback Template Report ────────────────────────────
+# ── Fallback Template ───────────────────────────────────
 
 def build_fallback_report(data):
-    """Compact template report if LLM is unavailable."""
     L = []
     L.append(f"📊 *Quant MVP v6.0 日报*")
     L.append(f"📅 `{data['date']}` {'✅' if data['status']=='success' else '❌'} `{data['elapsed_seconds']}s`")
 
     if data['status'] != 'success':
-        L.append(f"\n⛔ *错误*:\n```\n{data.get('error','')}\n```")
+        L.append(f"\n⛔ 错误:\n```\n{data.get('error','')}\n```")
         return '\n'.join(L)
 
-    uc = data.get('universe_count')
-    if uc: L.append(f"🌐 股票池`{uc}`只")
-
-    sig = data.get('signals')
-    if sig:
-        L.append(f"\n*▸ 双模型信号*")
-        L.append(f"🟢买`{sig['buy_count']}`个 🔴卖`{sig['sell_count']}`个 置信`{sig['avg_confidence']:.0f}%`")
-
-    orc = data.get('oracle')
-    if orc:
-        L.append(f"\n*▸ Kronos审查*")
-        L.append(f"✅`{orc['approved']}` ⚖️`{orc['neutral']}` 🚫`{orc['vetoed']}`")
-        if orc['vetoed_symbols']:
-            L.append(f"否决: {' '.join('`'+s+'`' for s in orc['vetoed_symbols'][:20])}")
+    f = data.get('funnel', {})
+    L.append(f"\n🔻 *决策漏斗*")
+    L.append(f"{data.get('universe_count','?')}只→{f.get('total_signals',0)}信号→冲突{f.get('dual_model_conflicts',0)}→否决{f.get('oracle_vetoed',0)}→零仓{f.get('zero_weight_filtered',0)}→*{f.get('final_actionable',0)}只入选*")
 
     orders = data.get('orders', [])
-    L.append(f"\n*▸ 📋 执行指令*")
+    L.append(f"\n📋 *操作指令*")
     if orders:
-        buys = [o for o in orders if o['direction'] == 'BUY']
-        sells = [o for o in orders if o['direction'] == 'SELL']
-        L.append(f"买`{len(buys)}`笔 卖`{len(sells)}`笔 总仓`{data.get('total_weight_pct',0):.1f}%`")
         for o in orders:
-            icon = "🟢" if o['direction'] == 'BUY' else "🔴"
-            line = f"  {icon}`{o['symbol']}` {o['weight_pct']:+.1f}%"
-            if o['price']: line += f" ${o['price']:.0f}×{o['shares']}股"
-            if o.get('kronos_pred_pct') is not None: line += f" K`{o['kronos_pred_pct']:+.1f}%`"
-            L.append(line)
-        zf = data.get('zero_weight_filtered', 0)
-        if zf > 0: L.append(f"_({zf}只权重0已过滤)_")
+            icon = "🟢买" if o['direction'] == 'BUY' else "🔴卖"
+            L.append(f"\n{icon} `{o['symbol']}` ${o['price_usd']:.0f}×{o['shares']}股 ({o['weight_pct']:+.1f}%)")
+            sig = o.get('signal', {}) or {}
+            orc = o.get('oracle', {}) or {}
+            details = []
+            if sig.get('model_agreement'): details.append(f"双模型{'一致' if sig['model_agreement']=='both_agree' else '冲突'}")
+            if sig.get('confidence_pct'): details.append(f"置信{sig['confidence_pct']:.0f}%")
+            if sig.get('volatility'): details.append(f"波动率{sig['volatility']:.3f}")
+            if orc.get('action'): details.append(f"Kronos:{orc['action']}({orc.get('predicted_return_pct',0):+.1f}%)")
+            if details: L.append(f"  ↳{'|'.join(details)}")
     else:
         L.append("⚪ 今日无操作")
 
     pf = data.get('portfolio')
     if pf:
-        L.append(f"\n*▸ 组合*")
-        L.append(f"💰`${pf['nav']:,.0f}` `{pf['cum_return']:+.2f}%` 回撤`{pf['max_dd']:.1f}%`")
-        L.append(f"持仓`{pf['positions']}`只 现金`${pf['cash']:,.0f}`")
+        L.append(f"\n💼 `${pf['nav']:,.0f}` `{pf['cum_return']:+.2f}%` 回撤`{pf['max_dd']:.1f}%` 现金`${pf['cash']:,.0f}`")
 
     L.append(f"\n_Quant MVP v6.0 | SMA+Momentum+Kronos_")
     return '\n'.join(L)
@@ -377,31 +396,22 @@ def main():
     start_time = datetime.now()
     trade_date = datetime.now().strftime('%Y-%m-%d')
 
-    # Run daily_job.py using the same Python interpreter (venv-aware)
     result = subprocess.run(
         [sys.executable, 'src/ops/daily_job.py'],
-        cwd=PROJECT_ROOT,
-        capture_output=True,
-        text=True,
+        cwd=PROJECT_ROOT, capture_output=True, text=True,
         env={**os.environ, **env, 'PYTHONPATH': PROJECT_ROOT}
     )
 
     elapsed = (datetime.now() - start_time).total_seconds()
-
-    # 1. Collect structured data
     report_data = collect_report_data(trade_date, elapsed, result.returncode, result.stderr)
 
-    # 2. Try LLM-enhanced report
     report = generate_llm_report(env, report_data)
-
-    # 3. Fall back to template if LLM fails
     if not report:
         report = build_fallback_report(report_data)
         print("[REPORT] Using fallback template")
     else:
         print("[REPORT] Using DeepSeek LLM report")
 
-    # 4. Send to Telegram
     send_telegram(env, report)
     print(report)
     sys.exit(result.returncode)

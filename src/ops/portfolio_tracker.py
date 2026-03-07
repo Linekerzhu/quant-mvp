@@ -147,6 +147,11 @@ class PortfolioTracker:
             
             if abs(delta) < 1:  # No change needed
                 continue
+            
+            # Skip short sells — this is a long-only virtual portfolio
+            if target_qty < 0:
+                logger.info("portfolio_skip_short", {"symbol": sym, "target_qty": target_qty})
+                continue
                 
             price = prices[sym]
             trade_value = abs(delta * price)
@@ -157,43 +162,54 @@ class PortfolioTracker:
                 cost = delta * price + friction_cost
                 if cost > state['cash']:
                     # Reduce qty to fit available cash
-                    delta = int((state['cash'] - friction_cost) / price)
+                    max_affordable = int((state['cash'] / (price * (1 + self.friction))))
+                    delta = max_affordable
                     if delta <= 0:
                         continue
-                    cost = delta * price + abs(delta * price) * self.friction
-                    friction_cost = abs(delta * price) * self.friction
+                    trade_value = delta * price
+                    friction_cost = trade_value * self.friction
+                    cost = trade_value + friction_cost
                 
                 state['cash'] -= cost
                 
-                # Update average cost
+                # Update average cost (includes friction in cost basis)
+                effective_price = cost / delta  # price + friction per share
                 if sym in current_positions:
                     old_qty = current_positions[sym]['qty']
                     old_cost = current_positions[sym]['avg_cost']
                     new_qty = old_qty + delta
-                    if new_qty != 0:
-                        new_avg = (old_qty * old_cost + delta * price) / new_qty
-                    else:
-                        new_avg = price
+                    # Weighted average cost including friction
+                    new_avg = (old_qty * old_cost + delta * effective_price) / new_qty
                     current_positions[sym] = {'qty': new_qty, 'avg_cost': new_avg}
                 else:
-                    current_positions[sym] = {'qty': delta, 'avg_cost': price}
+                    current_positions[sym] = {'qty': delta, 'avg_cost': effective_price}
                     
-            else:  # Sell (delta < 0)
+            else:  # Sell (delta < 0, reducing existing position)
                 sell_qty = abs(delta)
-                proceeds = sell_qty * price - friction_cost
                 
-                if sym in current_positions:
-                    avg_cost = current_positions[sym]['avg_cost']
-                    realized = sell_qty * (price - avg_cost) - friction_cost
-                    state['realized_pnl'] += realized
-                    
-                    remaining = current_positions[sym]['qty'] - sell_qty
-                    if remaining <= 0:
-                        del current_positions[sym]
-                    else:
-                        current_positions[sym]['qty'] = remaining
+                # Can only sell what we actually hold
+                if sym not in current_positions or current_positions[sym]['qty'] <= 0:
+                    logger.warn("portfolio_sell_no_position", {"symbol": sym})
+                    continue
                 
-                state['cash'] += proceeds
+                # Don't sell more than we hold
+                sell_qty = min(sell_qty, current_positions[sym]['qty'])
+                
+                avg_cost = current_positions[sym]['avg_cost']
+                gross_proceeds = sell_qty * price
+                friction_cost = gross_proceeds * self.friction
+                net_proceeds = gross_proceeds - friction_cost
+                
+                # Realized P&L = (sell_price - avg_cost) * qty - friction
+                realized = sell_qty * (price - avg_cost) - friction_cost
+                state['realized_pnl'] += realized
+                state['cash'] += net_proceeds
+                
+                remaining = current_positions[sym]['qty'] - sell_qty
+                if remaining <= 0:
+                    del current_positions[sym]
+                else:
+                    current_positions[sym]['qty'] = remaining
 
             trade = {
                 'date': trade_date, 'symbol': sym, 'action': 'BUY' if delta > 0 else 'SELL',

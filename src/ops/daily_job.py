@@ -13,6 +13,10 @@ import numpy as np
 import yaml
 import pandas as pd
 from pandas.tseries.offsets import BDay
+from dotenv import load_dotenv
+
+# Ensure cron jobs load .env variables securely
+load_dotenv()
 
 from src.data.ingest import DualSourceIngest
 from src.data.validate import DataValidator
@@ -37,6 +41,7 @@ from src.execution.futu_quote import FutuQuote
 from src.execution.slippage_model import SlippageModel
 
 import futu as ft
+from src.models.expert_oracle import KronosOracleClient
 
 logger = get_logger()
 
@@ -58,6 +63,7 @@ class DailyJob:
         self.risk = RiskEngine()
         self.pdt = PDTGuard()
         self.portfolio = PortfolioTracker(initial_cash=100000.0, friction=0.002)
+        self.account_value: float = 100000.0
         self.is_paper = True
         
         # Checkpoint dir
@@ -423,7 +429,15 @@ class DailyJob:
             return "No signals"
             
         # 1. PDT Check (Skip sizing if locked)
-        mock_history = []  # In production, read from actual trade logs
+        mock_history = []
+        try:
+            if os.path.exists("data/portfolio/trades.jsonl"):
+                with open("data/portfolio/trades.jsonl", "r") as f:
+                    import json
+                    mock_history = [json.loads(line) for line in f]
+        except Exception as e:
+            logger.error("pdt_history_load_failed", {"error": str(e)})
+
         account_val = getattr(self, 'account_value', 100000.0)
         is_compliant, remaining = self.pdt.check_pdt_compliance(mock_history, account_val)
         if not is_compliant:
@@ -432,7 +446,8 @@ class DailyJob:
             return {"status": "HALTED"}
 
         # 2. Independent Kelly Sizing
-        positions = self.sizer.calculate_positions(signals, current_drawdown=0.0) # Mock real DD
+        current_dd = self.portfolio.get_performance_summary().get("max_drawdown", 0.0)
+        positions = self.sizer.calculate_positions(signals, current_drawdown=current_dd)
         
         # Merge duplicate symbols (e.g. from both SMA and Momentum models) by summing their weights
         if not positions.empty:
@@ -441,6 +456,34 @@ class DailyJob:
         # 3. Risk Engine Caps (Single, Sector)
         validated_positions = self.risk.validate_positions(positions)
         
+        # 4. (Phase F) L5 Expert Oracle Veto check via Serverless Kronos model
+        oracle_url = os.environ.get("KRONOS_ENDPOINT_URL", "")
+        if oracle_url and not validated_positions.empty:
+            # In daily job context, getting features directly is tricky here, but we can load the latest features parquet
+            features_path = f"data/processed/features_{trade_date}.parquet"
+            if os.path.exists(features_path):
+                features_df = read_parquet_safe(features_path)
+                oracle = KronosOracleClient(oracle_url)
+                
+                final_targets = []
+                for _, row in validated_positions.iterrows():
+                    sym = row['symbol']
+                    w = row['target_weight']
+                    veto_decision = oracle.request_veto(sym, w, features_df)
+                    if veto_decision.get("action") == "veto":
+                        logger.info("oracle_veto_applied", {"symbol": sym, "reason": veto_decision.get("reason", "unknown")})
+                        # Skip adding to final targets
+                    else:
+                        row_dict = row.to_dict()
+                        row_dict['oracle_action'] = veto_decision.get("action", "approve")
+                        row_dict['oracle_reason'] = veto_decision.get("reason", "")
+                        row_dict['oracle_pred_ret'] = veto_decision.get("predicted_return", 0.0)
+                        final_targets.append(row_dict)
+                
+                validated_positions = pd.DataFrame(final_targets) if final_targets else pd.DataFrame(columns=validated_positions.columns)
+            else:
+                logger.warn("features_file_missing_for_oracle", {"date": trade_date})
+
         # Write final targets
         write_parquet_wap(validated_positions, f"data/processed/targets_{trade_date}.parquet")
         return {"target_count": len(validated_positions)}

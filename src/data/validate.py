@@ -181,7 +181,7 @@ class DataValidator:
             # Calculate returns using adjusted close
             # P1-B1 (R20): ffill before pct_change to detect jumps after NaN gaps
             # pct_change(fill_method=None) returns NaN after gaps, missing extreme values
-            returns = symbol_df['adj_close'].ffill().pct_change(fill_method=None).abs()
+            returns = symbol_df['adj_close'].ffill().pct_change().abs()
             
             # Detect jumps
             jump_mask = returns > self.max_daily_return

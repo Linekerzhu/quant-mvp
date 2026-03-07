@@ -1,0 +1,37 @@
+{
+  "inception_date": "2026-03-07",
+  "initial_cash": 100000.0,
+  "cash": 85088.68729446412,
+  "positions": {
+    "AMGN": {
+      "qty": 6,
+      "avg_cost": 370.26905877685545
+    },
+    "AMT": {
+      "qty": 23,
+      "avg_cost": 188.9671763305664
+    },
+    "ATO": {
+      "qty": 45,
+      "avg_cost": 185.41007327270506
+    }
+  },
+  "realized_pnl": 0.0,
+  "total_friction_paid": 29.763099212646488,
+  "trade_count": 3,
+  "history": [
+    {
+      "date": "2026-03-07",
+      "nav": 99970.23690078736,
+      "cash": 85088.68729446412,
+      "positions_value": 14881.549606323242,
+      "positions_count": 3,
+      "daily_return": -0.0002976309921263187,
+      "cumulative_pnl": -29.763099212636007,
+      "cumulative_return": -0.0002976309921263187,
+      "realized_pnl": 0.0,
+      "total_friction": 29.763099212646488,
+      "trades_today": 3
+    }
+  ]
+}

@@ -348,9 +348,9 @@ def main():
     start_time = datetime.now()
     trade_date = datetime.now().strftime('%Y-%m-%d')
 
-    # Run daily_job.py
+    # Run daily_job.py using the same Python interpreter (venv-aware)
     result = subprocess.run(
-        ['python3', 'src/ops/daily_job.py'],
+        [sys.executable, 'src/ops/daily_job.py'],
         cwd=PROJECT_ROOT,
         capture_output=True,
         text=True,

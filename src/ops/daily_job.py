@@ -118,9 +118,8 @@ class DailyJob:
                 self.alerts.send_alert("CRITICAL", f"🚨 运行异常: {step_name}", f"步骤 {step_name} 出现错误: {str(e)}")
                 return False
                 
-        # Build Chinese Telegram Report with portfolio status
-        report = self._build_telegram_report(trade_date, state, steps)
-        self.alerts.send_alert("INFO", f"📊 跑盘完成 ({trade_date})", report)
+        # Note: Rich Telegram report is now sent by run_daily_with_notify.py
+        # to avoid duplicate messages. Only error alerts (line 118) are sent from here.
         logger.info("daily_job_complete", {"trade_date": trade_date})
         return True
     

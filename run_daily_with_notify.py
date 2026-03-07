@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
 """
-Daily Job Runner with Rich Telegram Notification
+Daily Job Runner with Telegram Notification (v2 — Mobile-Optimized)
 
-Runs daily_job.py and sends a comprehensive multi-model decision report
-to Telegram, highlighting local dual-model signals, expert Oracle opinions,
-and final portfolio decisions.
+Runs daily_job.py and sends a single, compact, actionable Telegram report.
 """
 
 import os
@@ -16,10 +14,9 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-# Determine project root dynamically
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 
-# ─── Environment ─────────────────────────────────────────────────────────
+# ── Env & Telegram ──────────────────────────────────────
 
 def load_env():
     env = {}
@@ -35,24 +32,20 @@ def load_env():
 
 
 def send_telegram(env, message, parse_mode="Markdown"):
-    """Send Telegram message with chunking for long content."""
     token = env.get('TELEGRAM_BOT_TOKEN', '')
     chat_id = env.get('TELEGRAM_CHAT_ID', '')
     if not (token and chat_id):
         return False
-
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     chunks = _split_message(message, max_len=4000)
     ok = True
     for chunk in chunks:
         try:
             resp = requests.post(url, json={
-                "chat_id": chat_id,
-                "text": chunk,
-                "parse_mode": parse_mode
+                "chat_id": chat_id, "text": chunk, "parse_mode": parse_mode
             }, timeout=10)
             if not resp.ok:
-                print(f"Telegram send failed: {resp.status_code} {resp.text[:200]}")
+                print(f"Telegram fail: {resp.status_code}")
                 ok = False
         except Exception as e:
             print(f"Telegram error: {e}")
@@ -66,8 +59,7 @@ def _split_message(text, max_len=4000):
     chunks, cur = [], ""
     for line in text.split('\n'):
         while len(line) > max_len:
-            if cur:
-                chunks.append(cur); cur = ""
+            if cur: chunks.append(cur); cur = ""
             chunks.append(line[:max_len]); line = line[max_len:]
         if len(cur) + len(line) + 1 > max_len:
             if cur: chunks.append(cur)
@@ -78,270 +70,231 @@ def _split_message(text, max_len=4000):
     return chunks or [text]
 
 
-# ─── Data Readers ────────────────────────────────────────────────────────
+# ── Data Readers ────────────────────────────────────────
 
 def read_signals(trade_date):
-    """Read raw signals (before sizing) — shows both SMA and Momentum."""
     path = os.path.join(PROJECT_ROOT, f'data/processed/signals_{trade_date}.parquet')
-    if not os.path.exists(path):
-        return None
-    df = pd.read_parquet(path)
-    return df if len(df) > 0 else None
+    if os.path.exists(path):
+        df = pd.read_parquet(path)
+        return df if len(df) > 0 else None
+    return None
 
 
 def read_targets(trade_date):
-    """Read final targets (after Oracle veto) — includes oracle columns."""
     path = os.path.join(PROJECT_ROOT, f'data/processed/targets_{trade_date}.parquet')
-    if not os.path.exists(path):
-        return None
-    df = pd.read_parquet(path)
-    return df if len(df) > 0 else None
+    if os.path.exists(path):
+        df = pd.read_parquet(path)
+        return df if len(df) > 0 else None
+    return None
 
 
-def read_portfolio_state():
-    """Read virtual portfolio state."""
+def read_portfolio_summary():
     path = os.path.join(PROJECT_ROOT, 'data/portfolio/state.json')
     if not os.path.exists(path):
         return None
     with open(path, 'r') as f:
-        return json.load(f)
-
-
-def read_portfolio_summary():
-    """Read portfolio performance summary."""
-    state = read_portfolio_state()
-    if not state:
-        return None
+        state = json.load(f)
     history = state.get('history', [])
     if not history:
         return None
-
     nav = history[-1]['nav']
     initial = state.get('initial_cash', 100000)
     peak = initial
     max_dd = 0
     for snap in history:
-        if snap['nav'] > peak:
-            peak = snap['nav']
+        if snap['nav'] > peak: peak = snap['nav']
         dd = (peak - snap['nav']) / peak
-        if dd > max_dd:
-            max_dd = dd
-
+        if dd > max_dd: max_dd = dd
     return {
-        'nav': nav,
-        'initial': initial,
+        'nav': nav, 'initial': initial,
         'cum_return': (nav / initial - 1) * 100,
         'max_dd': max_dd * 100,
         'trading_days': len(history),
         'total_trades': state.get('trade_count', 0),
         'total_friction': state.get('total_friction_paid', 0),
-        'realized_pnl': state.get('realized_pnl', 0),
         'positions': len(state.get('positions', {})),
         'cash': state.get('cash', 0),
     }
 
 
+def get_latest_prices(trade_date):
+    """Get latest close prices from features file."""
+    path = os.path.join(PROJECT_ROOT, f'data/processed/features_{trade_date}.parquet')
+    if not os.path.exists(path):
+        return {}
+    df = pd.read_parquet(path)
+    prices = {}
+    for sym in df['symbol'].unique():
+        sym_data = df[df['symbol'] == sym]
+        if len(sym_data) > 0:
+            for col in ['adj_close', 'raw_close', 'close']:
+                if col in sym_data.columns:
+                    val = sym_data[col].iloc[-1]
+                    if pd.notna(val) and val > 0:
+                        prices[sym] = float(val)
+                        break
+    return prices
+
+
 def get_universe_count(trade_date):
     path = os.path.join(PROJECT_ROOT, f'data/processed/final_daily_{trade_date}.parquet')
     if os.path.exists(path):
-        try:
-            return pd.read_parquet(path)['symbol'].nunique()
-        except:
-            pass
+        try: return pd.read_parquet(path)['symbol'].nunique()
+        except: pass
     return None
 
 
-# ─── Report Builder ──────────────────────────────────────────────────────
+# ── Report Builder (Mobile-Optimized) ───────────────────
 
 def build_report(trade_date, elapsed, returncode, stderr):
-    """Build a rich multi-model Telegram report."""
+    """Build compact, actionable Telegram report for mobile."""
 
-    status_icon = "✅" if returncode == 0 else "❌"
-    status_text = "正常完成" if returncode == 0 else "执行失败"
+    ok = returncode == 0
+    L = []  # lines
 
-    # ── Header ──
-    lines = [
-        f"{'━' * 28}",
-        f"📊 *Quant MVP 每日决策报告*",
-        f"{'━' * 28}",
-        f"",
-        f"📅 日期: `{trade_date}`",
-        f"🔄 状态: {status_icon} {status_text}",
-        f"⏱ 耗时: `{elapsed:.0f}s`",
-    ]
+    # ─ Header (compact) ─
+    L.append(f"📊 *Quant MVP v6.0 日报*")
+    L.append(f"📅 `{trade_date}` {'✅' if ok else '❌'} `{elapsed:.0f}s`")
 
-    if returncode != 0:
-        lines.append(f"\n⛔ *系统错误*:\n```\n{stderr[-400:]}\n```")
-        return '\n'.join(lines)
+    if not ok:
+        L.append(f"\n⛔ *错误*:\n```\n{stderr[-300:]}\n```")
+        return '\n'.join(L)
 
-    # ── Universe ──
     universe = get_universe_count(trade_date)
     if universe:
-        lines.append(f"🌐 股票池: `{universe}` 只")
+        L.append(f"🌐 股票池 `{universe}` 只")
 
-    # ── Signals (dual model breakdown) ──
     signals_df = read_signals(trade_date)
     targets_df = read_targets(trade_date)
+    prices = get_latest_prices(trade_date)
+    perf = read_portfolio_summary()
+    nav = perf['nav'] if perf else 100000
 
-    lines.append("")
-    lines.append(f"{'─' * 28}")
-    lines.append("🧠 *一、本地双模型信号*")
-    lines.append(f"{'─' * 28}")
-
+    # ─ Section 1: Dual Model Summary (compact) ─
+    L.append("")
+    L.append("*▸ 本地双模型*")
     if signals_df is not None and len(signals_df) > 0:
-        buys = signals_df[signals_df['side'] > 0].copy()
-        sells = signals_df[signals_df['side'] < 0].copy()
-        total = len(signals_df)
+        buys = signals_df[signals_df['side'] > 0]
+        sells = signals_df[signals_df['side'] < 0]
+        avg_p = float(signals_df['prob'].mean()) * 100 if 'prob' in signals_df.columns else 0
+        L.append(f"🟢买`{len(buys)}`个 🔴卖`{len(sells)}`个 置信`{avg_p:.0f}%`")
 
-        # Detect model source if available
-        if 'model' in signals_df.columns:
-            sma_count = len(signals_df[signals_df['model'] == 'sma'])
-            mom_count = len(signals_df[signals_df['model'] == 'momentum'])
-            lines.append(f"  📐 SMA 均线信号: `{sma_count}` 个")
-            lines.append(f"  🚀 Momentum 动量信号: `{mom_count}` 个")
-        else:
-            lines.append(f"  合计信号: `{total}` 个 (SMA+Momentum)")
-
-        avg_prob = float(signals_df['prob'].mean()) if 'prob' in signals_df.columns else 0
-        lines.append(f"  📊 平均置信度: `{avg_prob*100:.1f}%`")
-        lines.append("")
-
-        # Top buys
+        # Top 5 buy signals
         if len(buys) > 0:
-            buys_sorted = buys.sort_values('prob', ascending=False) if 'prob' in buys.columns else buys
-            lines.append(f"  🟢 *买入信号* ({len(buys)} 个):")
-            for _, r in buys_sorted.head(8).iterrows():
-                sym = r['symbol']
-                prob = f"{r['prob']*100:.0f}%" if 'prob' in r.index else "–"
-                model_tag = f"[{r['model'][:3].upper()}]" if 'model' in r.index else ""
-                lines.append(f"    `{sym:6s}` 置信`{prob}` {model_tag}")
-            if len(buys) > 8:
-                lines.append(f"    _... +{len(buys)-8} 个_")
+            top_buys = buys.sort_values('prob', ascending=False).head(5) if 'prob' in buys.columns else buys.head(5)
+            buy_syms = ' '.join([f"`{r['symbol']}`" for _, r in top_buys.iterrows()])
+            L.append(f"  TOP买: {buy_syms}")
 
-        # Top sells
+        # Top 5 sell signals
         if len(sells) > 0:
-            sells_sorted = sells.sort_values('prob', ascending=False) if 'prob' in sells.columns else sells
-            lines.append(f"  🔴 *卖出信号* ({len(sells)} 个):")
-            for _, r in sells_sorted.head(5).iterrows():
-                sym = r['symbol']
-                prob = f"{r['prob']*100:.0f}%" if 'prob' in r.index else "–"
-                lines.append(f"    `{sym:6s}` 置信`{prob}`")
-            if len(sells) > 5:
-                lines.append(f"    _... +{len(sells)-5} 个_")
+            top_sells = sells.sort_values('prob', ascending=False).head(5) if 'prob' in sells.columns else sells.head(5)
+            sell_syms = ' '.join([f"`{r['symbol']}`" for _, r in top_sells.iterrows()])
+            L.append(f"  TOP卖: {sell_syms}")
     else:
-        lines.append("  ⚪ 今日双模型均无活跃信号")
+        L.append("⚪ 无信号")
 
-    # ── Oracle Expert Review ──
-    lines.append("")
-    lines.append(f"{'─' * 28}")
-    lines.append("🔮 *二、Kronos 外部专家判定*")
-    lines.append(f"{'─' * 28}")
+    # ─ Section 2: Oracle Verdict (compact) ─
+    L.append("")
+    L.append("*▸ Kronos 专家审查*")
 
+    vetoed_syms = set()
     if targets_df is not None and 'oracle_action' in targets_df.columns:
         approved = targets_df[targets_df['oracle_action'] == 'approve']
         neutral = targets_df[targets_df['oracle_action'] == 'neutral']
-        # Vetoed symbols are NOT in targets_df (they were removed)
-        total_reviewed = len(targets_df)
-
-        # Count vetoed by comparing signals vs targets
-        vetoed_count = 0
         if signals_df is not None:
-            signal_syms = set(signals_df['symbol'].unique()) if len(signals_df) > 0 else set()
-            target_syms = set(targets_df['symbol'].unique()) if len(targets_df) > 0 else set()
+            signal_syms = set(signals_df['symbol'].unique())
+            target_syms = set(targets_df['symbol'].unique())
             vetoed_syms = signal_syms - target_syms
-            vetoed_count = len(vetoed_syms)
+        vetoed_count = len(vetoed_syms)
 
-        lines.append(f"  ✅ 批准: `{len(approved)}` 只")
-        lines.append(f"  ⚖️ 中性: `{len(neutral)}` 只")
-        lines.append(f"  🚫 否决: `{vetoed_count}` 只")
-        lines.append("")
+        L.append(f"✅`{len(approved)}` ⚖️`{len(neutral)}` 🚫`{vetoed_count}`")
 
-        # Show approved with Oracle prediction
-        if len(approved) > 0:
-            lines.append("  *批准清单 (含预测回报):*")
-            for _, r in approved.head(10).iterrows():
-                sym = r['symbol']
-                w = r.get('target_weight', 0) * 100
-                pred_ret = r.get('oracle_pred_ret', 0) * 100
-                ret_icon = "📈" if pred_ret > 0 else "📉"
-                lines.append(f"    {ret_icon} `{sym:6s}` 仓位`{w:.1f}%` Kronos预测`{pred_ret:+.1f}%`")
-
-        # Show vetoed
-        if vetoed_count > 0 and signals_df is not None:
-            lines.append("")
-            lines.append("  *否决清单 (被专家一票否决):*")
-            for sym in sorted(vetoed_syms)[:8]:
-                lines.append(f"    🚫 `{sym}` — 专家预测下跌风险过大")
-            if vetoed_count > 8:
-                lines.append(f"    _... +{vetoed_count-8} 只_")
-
-    elif targets_df is not None and len(targets_df) > 0:
-        lines.append("  ℹ️ 专家 Oracle 未配置/未参与今日决策")
-        lines.append(f"  最终目标: `{len(targets_df)}` 只")
+        # Show vetoed symbols (ALL of them — this is critical info)
+        if vetoed_count > 0:
+            veto_list = ' '.join([f"`{s}`" for s in sorted(vetoed_syms)[:20]])
+            L.append(f"否决: {veto_list}")
+            if vetoed_count > 20:
+                L.append(f"  +{vetoed_count - 20}只")
+    elif targets_df is not None:
+        L.append("ℹ️ Oracle未参与")
     else:
-        lines.append("  ⚪ 无需专家审查 (无活跃目标)")
+        L.append("⚪ 无目标需审查")
 
-    # ── Final Targets ──
-    lines.append("")
-    lines.append(f"{'─' * 28}")
-    lines.append("🎯 *三、最终交易目标*")
-    lines.append(f"{'─' * 28}")
+    # ─ Section 3: ACTIONABLE ORDERS (the most important part) ─
+    L.append("")
+    L.append("*▸ 📋 执行指令*")
 
-    if targets_df is not None and len(targets_df) > 0:
-        total_weight = targets_df['target_weight'].sum() * 100 if 'target_weight' in targets_df.columns else 0
-        lines.append(f"  交易标的: `{len(targets_df)}` 只")
-        lines.append(f"  总仓位比例: `{total_weight:.1f}%`")
-        lines.append("")
+    if targets_df is not None and len(targets_df) > 0 and 'target_weight' in targets_df.columns:
+        # Filter out zero-weight targets — they are noise
+        actionable = targets_df[targets_df['target_weight'].abs() >= 0.005].copy()
+        actionable = actionable.sort_values('target_weight', key=abs, ascending=False)
 
-        targets_sorted = targets_df.sort_values('target_weight', ascending=False) if 'target_weight' in targets_df.columns else targets_df
-        for _, r in targets_sorted.head(10).iterrows():
-            sym = r['symbol']
-            w = r.get('target_weight', 0) * 100
-            abs_w = abs(w)
-            bar_len = int(min(abs_w * 2, 10))
-            if w >= 0:
-                bar = '🟩' * bar_len + '⬜' * (5 - bar_len)
-                lines.append(f"    🟢 `{sym:6s}` {bar} `{w:+.2f}%`")
-            else:
-                bar = '🟥' * bar_len + '⬜' * (5 - bar_len)
-                lines.append(f"    🔴 `{sym:6s}` {bar} `{w:+.2f}%`")
+        if len(actionable) > 0:
+            buy_orders = actionable[actionable['target_weight'] > 0]
+            sell_orders = actionable[actionable['target_weight'] < 0]
+            total_w = actionable['target_weight'].sum() * 100
 
-        if len(targets_df) > 10:
-            lines.append(f"    _... +{len(targets_df)-10} 只_")
+            L.append(f"买`{len(buy_orders)}`笔 卖`{len(sell_orders)}`笔 总仓`{total_w:.1f}%`")
+            L.append("")
+
+            # Buy orders with precise instructions
+            if len(buy_orders) > 0:
+                L.append("🟢 *买入:*")
+                for _, r in buy_orders.iterrows():
+                    sym = r['symbol']
+                    w = r['target_weight'] * 100
+                    price = prices.get(sym, 0)
+                    oracle_ret = r.get('oracle_pred_ret', 0) * 100 if 'oracle_pred_ret' in r.index else 0
+
+                    if price > 0:
+                        qty = int(abs(r['target_weight']) * nav / price)
+                        L.append(f"  `{sym}` {w:.1f}% ${price:.0f}×{qty}股")
+                        if oracle_ret != 0:
+                            L.append(f"    ↳Kronos `{oracle_ret:+.1f}%`")
+                    else:
+                        L.append(f"  `{sym}` {w:.1f}%")
+
+            # Sell orders with precise instructions
+            if len(sell_orders) > 0:
+                L.append("🔴 *卖出:*")
+                for _, r in sell_orders.iterrows():
+                    sym = r['symbol']
+                    w = r['target_weight'] * 100
+                    price = prices.get(sym, 0)
+
+                    if price > 0:
+                        qty = int(abs(r['target_weight']) * nav / price)
+                        L.append(f"  `{sym}` {w:.1f}% ${price:.0f}×{qty}股")
+                    else:
+                        L.append(f"  `{sym}` {w:.1f}%")
+        else:
+            L.append("⚪ 无有效仓位 (全部权重<0.5%)")
+
+        # Count how many were filtered as zero-weight
+        zero_w = len(targets_df) - len(actionable)
+        if zero_w > 0:
+            L.append(f"\n_({zero_w}只权重为0已过滤)_")
     else:
-        lines.append("  ⚪ 今日无交易 — 全员待命")
+        L.append("⚪ 今日无交易")
 
-    # ── Portfolio Performance ──
-    perf = read_portfolio_summary()
-    lines.append("")
-    lines.append(f"{'─' * 28}")
-    lines.append("💼 *四、虚拟组合绩效*")
-    lines.append(f"{'─' * 28}")
-
+    # ─ Section 4: Portfolio (one-line compact) ─
+    L.append("")
+    L.append("*▸ 虚拟组合*")
     if perf:
         ret_icon = "📈" if perf['cum_return'] >= 0 else "📉"
-        lines.append(f"  💰 净值: `${perf['nav']:,.0f}`")
-        lines.append(f"  {ret_icon} 累计回报: `{perf['cum_return']:+.2f}%`")
-        lines.append(f"  📉 最大回撤: `{perf['max_dd']:.2f}%`")
-        lines.append(f"  📊 交易天数: `{perf['trading_days']}` 天")
-        lines.append(f"  🔄 累计交易: `{perf['total_trades']}` 笔")
-        lines.append(f"  💸 累计摩擦: `${perf['total_friction']:.2f}`")
-        lines.append(f"  📦 当前持仓: `{perf['positions']}` 只")
-        lines.append(f"  💵 可用现金: `${perf['cash']:,.0f}`")
+        L.append(f"💰`${perf['nav']:,.0f}` {ret_icon}`{perf['cum_return']:+.2f}%` 回撤`{perf['max_dd']:.1f}%`")
+        L.append(f"持仓`{perf['positions']}`只 现金`${perf['cash']:,.0f}` 交易`{perf['total_trades']}`笔")
     else:
-        lines.append("  ℹ️ 尚未初始化虚拟组合")
+        L.append("ℹ️ 未初始化")
 
-    # ── Footer ──
-    lines.append("")
-    lines.append(f"{'━' * 28}")
-    lines.append(f"🤖 Quant MVP v6.0")
-    lines.append(f"_SMA + Momentum + Kronos Oracle_")
-    lines.append(f"{'━' * 28}")
+    # ─ Footer ─
+    L.append("")
+    L.append("_SMA+Momentum+Kronos | Quant MVP_")
 
-    return '\n'.join(lines)
+    return '\n'.join(L)
 
 
-# ─── Main ────────────────────────────────────────────────────────────────
+# ── Main ────────────────────────────────────────────────
 
 def main():
     env = load_env()
@@ -358,16 +311,10 @@ def main():
     )
 
     elapsed = (datetime.now() - start_time).total_seconds()
-
-    # Build report
     report = build_report(trade_date, elapsed, result.returncode, result.stderr)
 
-    # Send to Telegram
     send_telegram(env, report)
-
-    # Also print to stdout for cron log
     print(report)
-
     sys.exit(result.returncode)
 
 

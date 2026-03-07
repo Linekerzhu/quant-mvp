@@ -31,39 +31,63 @@ class UniverseManager:
         # P0 (R26-S1): Fix key name - YAML uses 'limit_slippage' not 'exit_limit_slippage'
         self.exit_slippage = self.config['component_changes']['removed_component']['limit_slippage']
     
-    def get_sp500_tickers(self) -> List[str]:
-        """Get current S&P 500 tickers."""
-        try:
-            # Try to fetch from Wikipedia (free source)
-            import requests
-            from bs4 import BeautifulSoup
-            
-            url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
-            response = requests.get(url, timeout=30)
-            soup = BeautifulSoup(response.content, 'html.parser')
-            
-            table = soup.find('table', {'id': 'constituents'})
-            tickers = []
-            
-            for row in table.find_all('tr')[1:]:  # Skip header
-                ticker = row.find_all('td')[0].text.strip()
-                tickers.append(ticker.replace('.', '-'))  # BRK.B -> BRK-B
-            
-            return tickers
-        except Exception as e:
-            logger.error("sp500_fetch_failed", {"error": str(e)})
-            # FIX B2: Use static fallback file instead of MOCK tickers
-            fallback_path = Path("data/sp500_fallback.csv")
-            if fallback_path.exists():
-                logger.info("using_fallback_tickers", {"source": str(fallback_path)})
-                fallback_df = pd.read_csv(fallback_path)
-                return fallback_df['symbol'].tolist()
-            else:
-                logger.error("no_fallback_available")
-                raise RuntimeError(
-                    f"Failed to fetch S&P 500 tickers and no fallback file at {fallback_path}. "
-                    "Please ensure data/sp500_fallback.csv exists or check network connectivity."
-                )
+    def get_index_tickers(self, index_names: List[str] = ['sp500']) -> List[str]:
+        """Get current tickers for given indices (sp500, nasdaq100, djia)."""
+        import requests
+        from bs4 import BeautifulSoup
+        
+        urls = {
+            'sp500': 'https://en.wikipedia.org/wiki/List_of_S%26P_500_companies',
+            'nasdaq100': 'https://en.wikipedia.org/wiki/Nasdaq-100',
+            'djia': 'https://en.wikipedia.org/wiki/Dow_Jones_Industrial_Average'
+        }
+        
+        all_tickers = set()
+        headers = {"User-Agent": "Mozilla/5.0"}
+        
+        for index_name in index_names:
+            if index_name not in urls:
+                logger.warn("unknown_index", {"index": index_name})
+                continue
+                
+            try:
+                response = requests.get(urls[index_name], headers=headers, timeout=30)
+                soup = BeautifulSoup(response.content, 'html.parser')
+                table = soup.find('table', {'id': 'constituents'})
+                
+                # Find the symbol column
+                ths = table.find_all('tr')[0].find_all(['th', 'td'])
+                headers_text = [th.text.strip().lower() for th in ths]
+                
+                ticker_idx = -1
+                for col_name in ['symbol', 'ticker']:
+                    if col_name in headers_text:
+                        ticker_idx = headers_text.index(col_name)
+                        break
+                        
+                if ticker_idx == -1:
+                    raise ValueError(f"Could not find ticker column in Headers: {headers_text}")
+                    
+                for row in table.find_all('tr')[1:]:
+                    cols = row.find_all(['th', 'td'])
+                    if len(cols) > ticker_idx:
+                        ticker = cols[ticker_idx].text.strip()
+                        all_tickers.add(ticker.replace('.', '-'))  # BRK.B -> BRK-B
+                        
+                logger.info("index_fetch_success", {"index": index_name, "count": len(all_tickers)})
+                
+            except Exception as e:
+                logger.error(f"{index_name}_fetch_failed", {"error": str(e)})
+                if index_name == 'sp500':
+                    fallback_path = Path("data/sp500_fallback.csv")
+                    if fallback_path.exists():
+                        logger.info("using_fallback_tickers", {"source": str(fallback_path)})
+                        fallback_df = pd.read_csv(fallback_path)
+                        all_tickers.update(fallback_df['symbol'].tolist())
+                    else:
+                        logger.error("no_fallback_available")
+                        
+        return sorted(list(all_tickers))
     
     def filter_liquidity(
         self,
@@ -227,7 +251,15 @@ class UniverseManager:
         """
         # Get base universe
         if current_universe is None:
-            base_tickers = self.get_sp500_tickers()
+            # Read specified indices from config, default to sp500
+            basestring = self.config.get('universe', {}).get('base', 'sp500')
+            if isinstance(basestring, (list, tuple)):
+                base_indices = [str(x) for x in basestring]
+            else:
+                # If comma separated
+                base_indices = [idx.strip() for idx in str(basestring).split(',')]
+            
+            base_tickers = self.get_index_tickers(base_indices)
         else:
             base_tickers = current_universe
         

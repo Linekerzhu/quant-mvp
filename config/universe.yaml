@@ -3,7 +3,11 @@
 
 # Base universe
 universe:
-  base: sp500  # S&P 500 components
+  base: 
+    - sp500
+    - nasdaq100
+    - djia
+  # Available options: sp500, nasdaq100, djia
   
   # Survivorship bias handling (Plan v4: Option B with interval estimation)
   survivorship_bias:

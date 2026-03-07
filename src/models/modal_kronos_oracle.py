@@ -4,6 +4,7 @@ from pydantic import BaseModel
 import pandas as pd
 from typing import List, Dict, Any, Optional
 import os
+import math
 
 app = modal.App("kronos-expert-oracle")
 
@@ -74,16 +75,24 @@ class KronosService:
             # Ensure timestamps are parsed — strip timezone to avoid .dt accessor errors
             df['timestamps'] = pd.to_datetime(df['timestamp'], utc=True).dt.tz_localize(None)
             
-            # Optional volume/amount
+            # Optional volume
             if 'volume' not in df.columns:
                 df['volume'] = 0.0
-            if 'amount' not in df.columns:
-                df['amount'] = 0.0
+            
+            # Derive 'amount' as volume * avg_price.
+            # Kronos was trained with amount ≈ volume * price. Sending amount=0
+            # while volume is large creates a distribution shift that degrades predictions.
+            df['amount'] = df['volume'] * df[['open', 'high', 'low', 'close']].mean(axis=1)
                 
             x_df = df[['open', 'high', 'low', 'close', 'volume', 'amount']]
             x_timestamp = df['timestamps']
             
-            # We want to predict pred_len units ahead. Let's create dummy future timestamps (business days approx)
+            # Guard: reject if last_close <= 0 (would cause ZeroDivisionError below)
+            last_close = float(x_df['close'].iloc[-1])
+            if last_close <= 0:
+                return {"symbol": req.symbol, "status": "error", "message": f"Invalid last close price: {last_close}"}
+            
+            # We want to predict pred_len units ahead using business day timestamps
             last_time = x_timestamp.iloc[-1]
             future_daterange = pd.bdate_range(start=last_time + pd.Timedelta(days=1), periods=req.pred_len)
             y_timestamp = pd.Series(future_daterange)
@@ -97,8 +106,15 @@ class KronosService:
             
             # Predictor returns pred_df with future OHLC
             future_close = float(pred_df['close'].iloc[-1])
-            last_close = float(x_df['close'].iloc[-1])
+            
+            # Guard against NaN/Inf from degenerate Kronos outputs
+            if math.isnan(future_close) or math.isinf(future_close):
+                return {"symbol": req.symbol, "status": "error", "message": "Kronos returned NaN/Inf prediction"}
+            
             predicted_return = (future_close / last_close) - 1.0
+            
+            # Clamp extreme predictions (> ±50%) as likely model hallucination
+            predicted_return = max(-0.5, min(0.5, predicted_return))
             
             action = "approve"
             if predicted_return < -0.015:

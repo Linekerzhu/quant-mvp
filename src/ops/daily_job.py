@@ -148,17 +148,18 @@ class DailyJob:
         logger.info("daily_job_complete", {"trade_date": trade_date})
         return True
 
-    def _load_checkpoint(self, trade_date: str) -> Dict[str, bool]:
+    def _load_checkpoint(self, trade_date: str) -> Dict[str, Any]:
         path = f"{self.ckpt_dir}/{trade_date}.json"
         if os.path.exists(path):
             with open(path, 'r') as f:
                 return json.load(f)
         return {}
         
-    def _save_checkpoint(self, trade_date: str, state: Dict[str, bool]):
+    def _save_checkpoint(self, trade_date: str, state: Dict[str, Any]):
         path = f"{self.ckpt_dir}/{trade_date}.json"
         with open(path + '.tmp', 'w') as f:
-            json.dump(state, f, indent=2)
+            # P0 (BugFix): Convert numpy types (int64/float64/etc) using default=str
+            json.dump(state, f, indent=2, default=str)
         os.replace(path + '.tmp', path)
 
     # ==========================================

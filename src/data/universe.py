@@ -36,48 +36,71 @@ class UniverseManager:
         import requests
         from bs4 import BeautifulSoup
         
-        urls = {
-            'sp500': 'https://en.wikipedia.org/wiki/List_of_S%26P_500_companies',
-            'nasdaq100': 'https://en.wikipedia.org/wiki/Nasdaq-100',
-            'djia': 'https://en.wikipedia.org/wiki/Dow_Jones_Industrial_Average'
+        # Reliable static CSV sources or fallback wiki URLs
+        sources = {
+            'sp500': {
+                'type': 'csv', 
+                'url': 'https://raw.githubusercontent.com/datasets/s-and-p-500-companies/master/data/constituents.csv',
+                'symbol_col': 'Symbol'
+            },
+            'nasdaq100': {
+                'type': 'wiki',
+                'url': 'https://en.wikipedia.org/wiki/Nasdaq-100'
+            },
+            'djia': {
+                'type': 'wiki',
+                'url': 'https://en.wikipedia.org/wiki/Dow_Jones_Industrial_Average'
+            }
         }
         
         all_tickers = set()
-        headers = {"User-Agent": "Mozilla/5.0"}
+        headers = {"User-Agent": "Mozilla/5.0 Quant-MVP/1.0"}
         
         for index_name in index_names:
-            if index_name not in urls:
+            if index_name not in sources:
                 logger.warn("unknown_index", {"index": index_name})
                 continue
                 
+            source = sources[index_name]
+            
             try:
-                response = requests.get(urls[index_name], headers=headers, timeout=30)
-                soup = BeautifulSoup(response.content, 'html.parser')
-                table = soup.find('table', {'id': 'constituents'})
-                
-                # Find the symbol column
-                ths = table.find_all('tr')[0].find_all(['th', 'td'])
-                headers_text = [th.text.strip().lower() for th in ths]
-                
-                ticker_idx = -1
-                for col_name in ['symbol', 'ticker']:
-                    if col_name in headers_text:
-                        ticker_idx = headers_text.index(col_name)
-                        break
-                        
-                if ticker_idx == -1:
-                    raise ValueError(f"Could not find ticker column in Headers: {headers_text}")
+                if source['type'] == 'csv':
+                    df = pd.read_csv(source['url'])
+                    sym_col = source['symbol_col']
+                    tickers = df[sym_col].astype(str).str.replace('.', '-').tolist()
+                    all_tickers.update(tickers)
+                    logger.info("index_fetch_csv_success", {"index": index_name, "count": len(tickers)})
                     
-                for row in table.find_all('tr')[1:]:
-                    cols = row.find_all(['th', 'td'])
-                    if len(cols) > ticker_idx:
-                        ticker = cols[ticker_idx].text.strip()
-                        all_tickers.add(ticker.replace('.', '-'))  # BRK.B -> BRK-B
+                elif source['type'] == 'wiki':
+                    response = requests.get(source['url'], headers=headers, timeout=30)
+                    soup = BeautifulSoup(response.content, 'html.parser')
+                    table = soup.find('table', {'id': 'constituents'})
+                    
+                    ths = table.find_all('tr')[0].find_all(['th', 'td'])
+                    headers_text = [th.text.strip().lower() for th in ths]
+                    
+                    ticker_idx = -1
+                    for col_name in ['symbol', 'ticker']:
+                        if col_name in headers_text:
+                            ticker_idx = headers_text.index(col_name)
+                            break
+                            
+                    if ticker_idx == -1:
+                        raise ValueError(f"Ticker column not found in: {headers_text}")
                         
-                logger.info("index_fetch_success", {"index": index_name, "count": len(all_tickers)})
+                    count = 0
+                    for row in table.find_all('tr')[1:]:
+                        cols = row.find_all(['th', 'td'])
+                        if len(cols) > ticker_idx:
+                            ticker = cols[ticker_idx].text.strip()
+                            all_tickers.add(ticker.replace('.', '-'))
+                            count += 1
+                            
+                    logger.info("index_fetch_wiki_success", {"index": index_name, "count": count})
                 
             except Exception as e:
                 logger.error(f"{index_name}_fetch_failed", {"error": str(e)})
+                # Universal fallback attempt for sp500
                 if index_name == 'sp500':
                     fallback_path = Path("data/sp500_fallback.csv")
                     if fallback_path.exists():

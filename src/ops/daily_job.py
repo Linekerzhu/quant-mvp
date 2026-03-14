@@ -576,6 +576,43 @@ class DailyJob:
         selected_df["target_weight"] = (inv_vol / inv_vol.sum()).values
         selected_df["side"] = 1  # All long
 
+        # --- Macro Risk Exposure Scaling (v5.1) ---
+        # Reduce equity exposure when macro environment is risky
+        macro_exposure = 1.0
+        macro_details = {}
+        try:
+            from src.features.macro_risk import MacroRiskMonitor
+            mrm = MacroRiskMonitor()
+            macro_score, macro_details = mrm.get_risk_score()
+            macro_exposure = mrm.score_to_exposure(macro_score)
+            
+            logger.info("macro_risk", {
+                "score": macro_score,
+                "exposure": macro_exposure,
+                "vix": macro_details.get("vix", {}).get("level"),
+                "yield_curve": macro_details.get("yield_curve", {}).get("spread"),
+                "credit_dd": macro_details.get("credit_stress", {}).get("hyg_drawdown_pct"),
+            })
+            
+            if macro_exposure < 1.0:
+                selected_df["target_weight"] *= macro_exposure
+                logger.info("macro_weight_reduction", {
+                    "factor": macro_exposure,
+                    "reason": f"macro_score={macro_score:.0f}/100",
+                })
+        except Exception as e:
+            logger.warn("macro_risk_failed", {"error": str(e)})
+
+        # Save macro assessment for reporting
+        if macro_details:
+            import json as _json4
+            macro_path = f"data/processed/macro_risk_{trade_date}.json"
+            with open(macro_path, "w") as mf:
+                _json4.dump({"score": macro_score, "exposure": macro_exposure, "details": {
+                    k: {kk: (round(vv, 3) if isinstance(vv, float) else vv) for kk, vv in v.items()}
+                    for k, v in macro_details.items()
+                }}, mf, indent=2)
+
         # Save
         output_cols = ["symbol", "side", "target_weight", "composite_score", "mom_12_1"]
         output_df = selected_df[[c for c in output_cols if c in selected_df.columns]].copy()

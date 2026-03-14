@@ -355,32 +355,72 @@ class DailyJob:
         # Compute factors on the latest date's cross-section
         g = features_df.groupby("symbol")["adj_close"]
 
-        # Factor 1: Momentum 12-1 (skip last month)
+        # Technical Factor 1: Momentum 12-1 (skip last month)
         features_df["mom_12_1"] = g.transform(lambda x: x.shift(21) / x.shift(252) - 1)
 
-        # Factor 2: Quality = inverse realized volatility
+        # Technical Factor 2: Low Volatility (quality proxy)
         features_df["rv_60d"] = g.transform(lambda x: x.pct_change().rolling(60).std() * np.sqrt(252))
-        features_df["quality"] = -features_df["rv_60d"]
-
-        # Factor 3: Value = price relative to SMA200
-        features_df["sma200"] = g.transform(lambda x: x.rolling(200).mean())
-        features_df["value"] = -(features_df["adj_close"] / features_df["sma200"] - 1)
-
-        # Cross-sectional ranking on latest date
-        today = features_df[features_df["date"] == latest_date].copy()
-        for col in ["mom_12_1", "quality", "value"]:
-            today[f"{col}_rank"] = today[col].rank(pct=True, na_option="bottom")
-
-        # Composite score: 70% Mom + 15% Quality + 15% Value
-        today["composite_score"] = (
-            0.70 * today["mom_12_1_rank"] +
-            0.15 * today["quality_rank"] +
-            0.15 * today["value_rank"]
-        )
+        features_df["low_vol"] = -features_df["rv_60d"]
 
         # Realized vol for inv-vol weighting
         features_df["rv_20d"] = g.transform(lambda x: x.pct_change().rolling(20).std() * np.sqrt(252))
         rv_map = features_df[features_df["date"] == latest_date].set_index("symbol")["rv_20d"].to_dict()
+
+        # Cross-sectional ranking on latest date
+        today = features_df[features_df["date"] == latest_date].copy()
+        today["mom_12_1_rank"] = today["mom_12_1"].rank(pct=True, na_option="bottom")
+        today["low_vol_rank"] = today["low_vol"].rank(pct=True, na_option="bottom")
+
+        # --- Fundamental Factors (v5.1) ---
+        # Download/cache fundamental data: PE, ROE, margins, growth, debt
+        try:
+            from src.features.fundamentals import FundamentalProvider
+            fp = FundamentalProvider()
+            all_syms = today["symbol"].unique().tolist()
+            fund_df = fp.get_fundamentals(all_syms, date=trade_date)
+            
+            # Compute fundamental composite score
+            fund_composite = fp.compute_composite(fund_df)
+            fund_df["fundamental_score"] = fund_composite
+            
+            # Merge into today
+            today = today.merge(
+                fund_df[["symbol", "fundamental_score", "earnings_yield", "roe", "profit_margin", "earnings_growth"]],
+                on="symbol", how="left"
+            )
+            today["fundamental_rank"] = today["fundamental_score"].rank(pct=True, na_option="bottom")
+            has_fundamentals = True
+            
+            n_with_fund = today["fundamental_score"].notna().sum()
+            logger.info("fundamentals_loaded", {
+                "total": len(all_syms),
+                "with_data": int(n_with_fund),
+                "coverage": f"{n_with_fund/len(all_syms)*100:.0f}%",
+            })
+        except Exception as e:
+            logger.warn("fundamentals_failed", {"error": str(e)})
+            today["fundamental_rank"] = 0.5  # Neutral if unavailable
+            has_fundamentals = False
+
+        # Composite score: Technical + Fundamental
+        # 40% Momentum + 25% Fundamental + 20% Low Volatility + 15% reserved for growth
+        if has_fundamentals:
+            today["composite_score"] = (
+                0.40 * today["mom_12_1_rank"] +
+                0.25 * today["fundamental_rank"] +
+                0.20 * today["low_vol_rank"] +
+                0.15 * today.get("earnings_growth", pd.Series(0.5, index=today.index)).rank(pct=True, na_option="bottom")
+            )
+            factor_desc = "40%Mom + 25%Fundamental + 20%LowVol + 15%Growth"
+        else:
+            # Fallback to price-only if fundamentals unavailable
+            today["composite_score"] = (
+                0.70 * today["mom_12_1_rank"] +
+                0.30 * today["low_vol_rank"]
+            )
+            factor_desc = "70%Mom + 30%LowVol (no fundamentals)"
+        
+        logger.info("composite_factors", {"formula": factor_desc})
 
         # Select top-K with sector cap
         ranked = today.dropna(subset=["composite_score"]).sort_values("composite_score", ascending=False)

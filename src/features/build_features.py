@@ -6,6 +6,7 @@ Multi-time-scale feature calculation with dummy noise injection.
 
 import numpy as np
 import pandas as pd
+import os
 from typing import Dict, List, Optional, Tuple
 import yaml
 
@@ -183,6 +184,13 @@ class FeatureEngineer:
         # Keep NaN as NaN (don't fill with 0)
         df['feature_version'] = self.version
         
+        # Phase I: Merge GNN embeddings if available
+        gnn_emb_path = self.config.get('gnn_embeddings', {}).get(
+            'cache_path', 'data/cache/gnn_embeddings.parquet'
+        )
+        if os.path.exists(gnn_emb_path) and self.config.get('gnn_embeddings', {}).get('enabled', False):
+            df = self.add_gnn_embeddings(df, gnn_emb_path)
+        
         elapsed_ms = (time.time() - start_time) * 1000
         logger.info("features_built", {
             "version": self.version,
@@ -194,6 +202,49 @@ class FeatureEngineer:
         
         return df
     
+    def build_features_incremental(self, df_history: pd.DataFrame, df_new_tick: pd.DataFrame) -> pd.DataFrame:
+        """
+        Phase L1: Incremental feature engineering for streaming pipelines.
+        
+        Concatenates the historical buffer with the new tick data, calculates
+        all multi-time-scale features, and then extracts ONLY the features 
+        corresponding to the new tick data to minimize downstream processing.
+        
+        Args:
+            df_history: Historical OHLCV data providing lookback context (e.g. 252 days)
+            df_new_tick: The newest data slice (tick, minute, or daily bar)
+            
+        Returns:
+            DataFrame containing ONLY the engineered features for df_new_tick
+        """
+        import time
+        start_time = time.time()
+        
+        # 1. Combine data securely
+        # W4 FIX: Clip to 65 days (60 max window + 5 warm-up buffer)
+        if 'date' in df_history.columns:
+            recent_dates = pd.Series(df_history['date'].unique()).nlargest(65)
+            df_history = df_history[df_history['date'].isin(recent_dates)]
+            
+        df_combined = pd.concat([df_history, df_new_tick]).drop_duplicates(subset=['symbol', 'date'], keep='last')
+        
+        # 2. Build features relying on full vectorization
+        df_features = self.build_features(df_combined)
+        
+        # 3. Extract only the new tick's features
+        new_dates = df_new_tick['date'].unique()
+        df_incremental = df_features[df_features['date'].isin(new_dates)].copy()
+        
+        elapsed_ms = (time.time() - start_time) * 1000
+        logger.info("features_built_incremental", {
+            "version": self.version,
+            "tick_rows": len(df_incremental),
+            "history_rows": len(df_history),
+            "elapsed_ms": elapsed_ms
+        })
+        
+        return df_incremental
+
     def _build_features_inner(self, df: pd.DataFrame, provides_adj_ohlc: bool) -> pd.DataFrame:
         """
         Internal feature builder for a single source type.
@@ -421,6 +472,7 @@ class FeatureEngineer:
         Uses defensive assertion to catch any label columns.
         """
         exclude = ['symbol', 'date', 'raw_open', 'raw_high', 'raw_low', 'raw_close',
+                   'open', 'high', 'low', 'close',  # raw OHLC — dollar-scale, no cross-stock comparability
                    'adj_open', 'adj_high', 'adj_low', 'adj_close', 'volume',
                    'feature_version', 'detected_split', 'split_ratio', 'is_suspended',
                    'suspension_start', 'can_trade',
@@ -440,7 +492,14 @@ class FeatureEngineer:
                    'regime_vol_score',       # r=0.90 with rv_20d
                    'regime_trend_score',     # r=0.82 with adx_14
                    'price_vs_ema20_zscore',  # r=0.97 with price_vs_sma20_zscore
-                   'obv']                    # absolute volume, 500x cross-symbol variance
+                   'obv',                    # absolute volume, 500x cross-symbol variance
+                   # Phase H.5: Exclude raw signal columns (use derived conflict features)
+                   'sma_side', 'mom_side', 'mr_side', 'sma_fast', 'sma_slow', 'mom_ret',
+                   'side', 'meta_label', 'meta_prob',
+                   # Phase H: Exclude LTR-specific columns
+                   'fwd_return', 'ltr_label', 'query_group', 'label_exit_date',
+                   'vote_val', 'synth_side',
+        ]
         
         # Defensive assertion: detect any label-related columns
         label_cols = [col for col in df.columns if col.startswith('label')]
@@ -449,6 +508,192 @@ class FeatureEngineer:
                            "This indicates data leakage. Ensure labels are not passed to build_features().")
         
         return [col for col in df.columns if col not in exclude]
+    
+    # =========================================================================
+    # Phase H.5: Signal Conflict Features
+    # =========================================================================
+    
+    @staticmethod
+    def add_signal_conflict_features(df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Phase H.5: Compute signal conflict detection features.
+        
+        Computes model agreement / divergence features from pre-computed 
+        SMA and Momentum signals. These features let the LTR model learn
+        how to handle conflicting base signals, instead of using a hard
+        sum() merge that annihilates ~40% of signals.
+        
+        REQUIRES: 'sma_side' and 'mom_side' columns already computed.
+        
+        AUDIT H5-A1: These features are derived from T-period signals only
+        (SMA/Momentum use historical prices). No look-ahead bias.
+        
+        Args:
+            df: DataFrame with 'sma_side' and 'mom_side' columns
+            
+        Returns:
+            DataFrame with added conflict features
+        """
+        df = df.copy()
+        
+        has_sma = 'sma_side' in df.columns
+        has_mom = 'mom_side' in df.columns
+        has_mr = 'mr_side' in df.columns
+        
+        if not (has_sma and has_mom):
+            # No signals to compare — fill with neutral values
+            df['model_agreement'] = 0.0
+            df['signal_divergence'] = 0.0
+            df['dominant_model_strength'] = 0.0
+            df['n_active_signals'] = 0
+            return df
+        
+        sma = df['sma_side'].fillna(0).astype(float)
+        mom = df['mom_side'].fillna(0).astype(float)
+        
+        # Feature 1: model_agreement — do SMA and Momentum agree?
+        # +1 = both same direction, 0 = at least one neutral, -1 = opposite directions
+        df['model_agreement'] = np.where(
+            (sma != 0) & (mom != 0),
+            np.sign(sma * mom),  # +1 if same sign, -1 if opposite
+            0.0  # at least one is neutral
+        )
+        
+        # Feature 2: signal_divergence — magnitude of disagreement  
+        # 0 = perfect agreement, 2 = maximum conflict (one BUY one SELL)
+        df['signal_divergence'] = np.abs(sma - mom)
+        
+        # Feature 3: dominant_model_strength — confidence of the stronger signal
+        # Defined as max(|sma|, |mom|) since side ∈ {-1, 0, 1}
+        # This tells the model which signal is "louder"
+        df['dominant_model_strength'] = np.maximum(np.abs(sma), np.abs(mom))
+        
+        # Feature 4: n_active_signals — how many models are non-zero
+        active = (sma != 0).astype(int) + (mom != 0).astype(int)
+        if has_mr:
+            mr = df['mr_side'].fillna(0).astype(float)
+            active += (mr != 0).astype(int)
+            # Update agreement to include mean-reversion model
+            # If 3 models, check if majority agree
+            total_vote = sma + mom + mr
+            df['model_agreement'] = np.where(
+                active >= 2,
+                np.sign(total_vote) * (np.abs(total_vote) >= 2).astype(float),
+                df['model_agreement']
+            )
+        df['n_active_signals'] = active
+        
+        return df
+    
+    # =========================================================================
+    # Phase I: GNN Embedding Integration
+    # =========================================================================
+    
+    @staticmethod
+    def add_gnn_embeddings(
+        df: pd.DataFrame,
+        emb_path: str = 'data/cache/gnn_embeddings.parquet'
+    ) -> pd.DataFrame:
+        """
+        Phase I: Merge pre-computed GNN embeddings into feature DataFrame.
+        
+        AUDIT I-A3: This reads a Parquet file — NO PyTorch import required.
+        Production code never needs torch.
+        
+        Embeddings are joined on (symbol, date). Missing embeddings are NaN-filled,
+        which LightGBM handles natively (treats as missing → splits accordingly).
+        
+        Args:
+            df: Feature DataFrame with ['symbol', 'date'] columns
+            emb_path: Path to the GNN embeddings Parquet file
+            
+        Returns:
+            DataFrame with gnn_emb_0..gnn_emb_15 columns added
+        """
+        if not os.path.exists(emb_path):
+            return df
+        
+        emb_df = pd.read_parquet(emb_path)
+        
+        # Validate embedding columns exist
+        emb_cols = [c for c in emb_df.columns if c.startswith('gnn_emb_')]
+        if not emb_cols:
+            return df
+        
+        # Ensure date types match
+        emb_df['date'] = pd.to_datetime(emb_df['date'])
+        
+        # Merge on (symbol, date) — left join preserves all rows
+        n_before = len(df)
+        df = df.merge(emb_df[['symbol', 'date'] + emb_cols], 
+                      on=['symbol', 'date'], how='left')
+        assert len(df) == n_before, (
+            f"GNN merge changed row count: {n_before} → {len(df)}. "
+            f"Check for duplicate (symbol, date) in embeddings."
+        )
+        
+        n_filled = df[emb_cols[0]].notna().sum()
+        coverage = n_filled / len(df) * 100
+        print(f"[GNN] Merged {len(emb_cols)} embedding dims, "
+              f"coverage: {n_filled}/{len(df)} ({coverage:.1f}%)")
+        
+        return df
+    
+    # =========================================================================
+    # NDCG Optimization: Cross-Sectional Rank Features
+    # =========================================================================
+    
+    @staticmethod
+    def add_cross_sectional_features(df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Add cross-sectional percentile rank features per date.
+        
+        For LTR models, knowing a stock's RELATIVE position within each day's
+        cohort is crucial. These features transform absolute values into 
+        cross-sectional ranks, giving the model direct comparability signals.
+        
+        No look-ahead bias: all source features are computed from historical data.
+        
+        Args:
+            df: DataFrame with ['symbol', 'date'] + feature columns
+            
+        Returns:
+            DataFrame with added cs_rank_* columns
+        """
+        df = df.copy()
+        
+        # Features to rank cross-sectionally
+        rank_features = {
+            'returns_5d': 'cs_rank_ret5d',
+            'returns_20d': 'cs_rank_ret20d',
+            'rv_20d': 'cs_rank_vol20d',
+            'rsi_14': 'cs_rank_rsi',
+            'adx_14': 'cs_rank_adx',
+            'macd_histogram_pct': 'cs_rank_macd',
+        }
+        
+        for src_col, dst_col in rank_features.items():
+            if src_col in df.columns:
+                # Percentile rank within each date (0 = lowest, 1 = highest)
+                df[dst_col] = df.groupby('date')[src_col].rank(pct=True, method='average')
+            else:
+                df[dst_col] = 0.5  # neutral rank if feature missing
+        
+        # Cross-sectional Z-score of returns (how many std from mean)
+        if 'returns_5d' in df.columns:
+            grp = df.groupby('date')['returns_5d']
+            df['cs_zscore_ret5d'] = (df['returns_5d'] - grp.transform('mean')) / grp.transform('std').replace(0, 1)
+            df['cs_zscore_ret5d'] = df['cs_zscore_ret5d'].clip(-3, 3).fillna(0)
+        
+        if 'returns_20d' in df.columns:
+            grp = df.groupby('date')['returns_20d']
+            df['cs_zscore_ret20d'] = (df['returns_20d'] - grp.transform('mean')) / grp.transform('std').replace(0, 1)
+            df['cs_zscore_ret20d'] = df['cs_zscore_ret20d'].clip(-3, 3).fillna(0)
+        
+        # Daily count of active stocks (proxy for market breadth)
+        df['cs_n_stocks'] = df.groupby('date')['symbol'].transform('count')
+        
+        return df
     
     def get_feature_metadata(self) -> Dict:
         """Get feature metadata for tracking."""

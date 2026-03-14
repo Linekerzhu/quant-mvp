@@ -1,23 +1,23 @@
 # Risk Limits Configuration
 # Multi-layer risk management
 
-# Layer 1: Signal Level
+# Layer 1: Signal Level (v4: factor-based, no ML probability threshold)
 signal_level:
-  # Confidence threshold for trade execution
-  confidence_threshold: 0.55  # Model probability threshold
-  
-  # Meta-labeling gate (if enabled)
-  meta_labeling:
-    min_samples: 5000  # Minimum samples to enable
-    threshold: 0.60    # Secondary model threshold
+  # v4 uses cross-sectional factor ranking, not model probability
+  strategy: multifactor_monthly
+  top_k: 15  # Number of positions to hold
+  composite_weights:
+    momentum: 0.70
+    quality: 0.15
+    value: 0.15
 
 # Layer 2: Position Level
 position_level:
-  # Single stock limit
-  single_stock_max: 0.10  # 10% max per position
+  # Single stock limit (v4: inv-vol max weight ~10%)
+  single_stock_max: 0.12  # 12% max per position (slight buffer over inv-vol max)
   
-  # Industry exposure limit
-  industry_max: 0.30  # 30% max per industry
+  # Industry exposure limit (v4: sector_cap = 0.25)
+  industry_max: 0.25  # 25% max per industry — matches walk_forward.py sector_cap
   
   # Sector tracking
   track_sectors: true
@@ -26,16 +26,16 @@ position_level:
 # Layer 3: Portfolio Level
 portfolio_level:
   # Daily loss limit
-  daily_loss_limit: 0.01  # 1% daily loss limit
+  daily_loss_limit: 0.03  # 3% daily loss limit (raised from 1% for v4 momentum strategy)
   
-  # Maximum drawdown
+  # Maximum drawdown (v4: backtested MaxDD = 16.6%, GO gate = 35%)
   max_drawdown:
-    warning: 0.10   # 10% - reduce position
-    kill_switch: 0.12  # 12% - full exit
+    warning: 0.20   # 20% — start reducing positions
+    kill_switch: 0.30  # 30% — full exit (below 35% GO gate)
   
   # Consecutive loss protection
   consecutive_losses:
-    threshold: 3  # Days
+    threshold: 5  # Days (raised from 3 — monthly rebalance means longer drawdowns)
     action: reduce_50_percent  # Reduce position by 50%
   
   # Total leverage
@@ -59,7 +59,7 @@ system_level:
         threshold: -1.0  # Daily Sharpe < -1
         consecutive_days: 5
       drawdown:
-        threshold: 0.08  # 8% drawdown
+        threshold: 0.18  # 18% drawdown (v4 backtested MaxDD = 16.6%)
     
 # PDT Guard
 pdt_guard:

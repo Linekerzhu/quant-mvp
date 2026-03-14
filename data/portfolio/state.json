@@ -1,24 +1,68 @@
 {
   "inception_date": "2026-03-07",
   "initial_cash": 100000.0,
-  "cash": 85088.68729446412,
+  "cash": 73105.42995872497,
   "positions": {
-    "AMGN": {
-      "qty": 6,
-      "avg_cost": 370.26905877685545
+    "CMS": {
+      "qty": 22,
+      "avg_cost": 76.93355877685548
     },
-    "AMT": {
-      "qty": 23,
-      "avg_cost": 188.9671763305664
+    "HOLX": {
+      "qty": 132,
+      "avg_cost": 75.3604190826416
     },
-    "ATO": {
-      "qty": 45,
-      "avg_cost": 185.41007327270506
+    "LIN": {
+      "qty": 2,
+      "avg_cost": 491.3908236694336
+    },
+    "MCD": {
+      "qty": 4,
+      "avg_cost": 324.5578236694336
+    },
+    "MO": {
+      "qty": 16,
+      "avg_cost": 67.85544122314454
+    },
+    "PPL": {
+      "qty": 29,
+      "avg_cost": 38.146139694213865
+    },
+    "REG": {
+      "qty": 20,
+      "avg_cost": 76.70310305786133
+    },
+    "SO": {
+      "qty": 11,
+      "avg_cost": 98.0356763305664
+    },
+    "SRE": {
+      "qty": 11,
+      "avg_cost": 93.37638244628906
+    },
+    "TJX": {
+      "qty": 9,
+      "avg_cost": 156.10157327270508
+    },
+    "TRV": {
+      "qty": 3,
+      "avg_cost": 302.6140297851562
+    },
+    "VTR": {
+      "qty": 16,
+      "avg_cost": 86.37239694213868
+    },
+    "WEC": {
+      "qty": 17,
+      "avg_cost": 115.28010305786133
+    },
+    "XEL": {
+      "qty": 16,
+      "avg_cost": 80.98163969421387
     }
   },
-  "realized_pnl": 0.0,
-  "total_friction_paid": 29.763099212646488,
-  "trade_count": 3,
+  "realized_pnl": -191.7410818786612,
+  "total_friction_paid": 112.560298538208,
+  "trade_count": 20,
   "history": [
     {
       "date": "2026-03-07",
@@ -32,6 +76,19 @@
       "realized_pnl": 0.0,
       "total_friction": 29.763099212646488,
       "trades_today": 3
+    },
+    {
+      "date": "2026-03-13",
+      "nav": 99754.95985832214,
+      "cash": 73105.42995872497,
+      "positions_value": 26649.529899597168,
+      "positions_count": 14,
+      "daily_return": -0.0008293175023730281,
+      "cumulative_pnl": -245.04014167786227,
+      "cumulative_return": -0.002450401416778658,
+      "realized_pnl": -191.7410818786612,
+      "total_friction": 112.560298538208,
+      "trades_today": 17
     }
   ]
 }

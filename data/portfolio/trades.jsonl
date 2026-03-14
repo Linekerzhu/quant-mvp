@@ -1,3 +1,20 @@
 {"date": "2026-03-07", "symbol": "AMGN", "action": "BUY", "qty": 6, "price": 369.5299987792969, "friction": 4.434359985351563}
 {"date": "2026-03-07", "symbol": "AMT", "action": "BUY", "qty": 23, "price": 188.58999633789062, "friction": 8.67513983154297}
 {"date": "2026-03-07", "symbol": "ATO", "action": "BUY", "qty": 45, "price": 185.0399932861328, "friction": 16.653599395751954}
+{"date": "2026-03-13", "symbol": "AMGN", "action": "CLOSE", "qty": -6, "price": 367.7900085449219, "friction": 4.413480102539062, "realized_pnl": -19.287781494140482}
+{"date": "2026-03-13", "symbol": "AMT", "action": "CLOSE", "qty": -23, "price": 179.86000061035156, "friction": 8.273560028076172, "realized_pnl": -217.73860159301736}
+{"date": "2026-03-13", "symbol": "ATO", "action": "CLOSE", "qty": -45, "price": 186.7899932861328, "friction": 16.811099395751953, "realized_pnl": 45.285301208496676}
+{"date": "2026-03-13", "symbol": "CMS", "action": "BUY", "qty": 22, "price": 76.77999877929688, "friction": 3.3783199462890625}
+{"date": "2026-03-13", "symbol": "HOLX", "action": "BUY", "qty": 132, "price": 75.20999908447266, "friction": 19.855439758300783}
+{"date": "2026-03-13", "symbol": "LIN", "action": "BUY", "qty": 2, "price": 490.4100036621094, "friction": 1.9616400146484376}
+{"date": "2026-03-13", "symbol": "MCD", "action": "BUY", "qty": 4, "price": 323.9100036621094, "friction": 2.591280029296875}
+{"date": "2026-03-13", "symbol": "MO", "action": "BUY", "qty": 16, "price": 67.72000122070312, "friction": 2.1670400390625}
+{"date": "2026-03-13", "symbol": "PPL", "action": "BUY", "qty": 29, "price": 38.06999969482422, "friction": 2.2080599822998046}
+{"date": "2026-03-13", "symbol": "REG", "action": "BUY", "qty": 20, "price": 76.55000305175781, "friction": 3.0620001220703124}
+{"date": "2026-03-13", "symbol": "SO", "action": "BUY", "qty": 11, "price": 97.83999633789062, "friction": 2.1524799194335937}
+{"date": "2026-03-13", "symbol": "SRE", "action": "BUY", "qty": 11, "price": 93.19000244140625, "friction": 2.0501800537109376}
+{"date": "2026-03-13", "symbol": "TJX", "action": "BUY", "qty": 9, "price": 155.7899932861328, "friction": 2.8042198791503905}
+{"date": "2026-03-13", "symbol": "TRV", "action": "BUY", "qty": 3, "price": 302.010009765625, "friction": 1.81206005859375}
+{"date": "2026-03-13", "symbol": "VTR", "action": "BUY", "qty": 16, "price": 86.19999694824219, "friction": 2.75839990234375}
+{"date": "2026-03-13", "symbol": "WEC", "action": "BUY", "qty": 17, "price": 115.05000305175781, "friction": 3.911700103759766}
+{"date": "2026-03-13", "symbol": "XEL", "action": "BUY", "qty": 16, "price": 80.81999969482422, "friction": 2.586239990234375}

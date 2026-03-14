@@ -33,7 +33,7 @@ position:
   
   # Scaling factors
   scales:
-    confidence: true  # Scale by signal confidence
+    confidence: false  # DISABLED: Kelly fraction already incorporates prob; double-scaling crushes positions when prob ~0.52
     volatility: true  # Scale by target vol / realized vol
     drawdown: true   # Scale down during drawdown
   
@@ -70,9 +70,9 @@ portfolio:
     max_single_position: 0.10  # 10% max (also in risk_limits)
     min_position_size: 0.01   # 1% minimum (avoid dust)
 
-# Rebalancing
+# Rebalancing (v4: monthly to reduce friction)
 rebalancing:
-  frequency: daily
+  frequency: monthly  # Changed from daily — v4 factor strategy uses monthly
   threshold: 0.02  # Rebalance if drift > 2%
   
   # Execution

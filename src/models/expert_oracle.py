@@ -61,7 +61,34 @@ class KronosOracleClient:
             resp.raise_for_status()
             
             data = resp.json()
-            return data
+            
+            # Phase I3: Dynamic veto threshold
+            # Approximate VIX by taking median 20d annualized realized vol of universe * 100
+            if 'rv_20d' in features_df.columns:
+                vix_proxy = features_df['rv_20d'].median() * 100
+            else:
+                vix_proxy = 18.0  # Default to normal market
+                
+            if vix_proxy > 25:
+                threshold = -0.03
+            elif vix_proxy > 18:
+                threshold = -0.01
+            else:
+                threshold = -0.005
+                
+            pred_ret = data.get("predicted_return", 0.0)
+            
+            # Override action based on dynamic threshold
+            if pred_ret < threshold:
+                data["action"] = "veto"
+            elif pred_ret < 0.0:
+                data["action"] = "neutral"
+            else:
+                data["action"] = "approve"
+                
+            data["reason"] += f" (Threshold: {threshold*100:.1f}%, VIX proxy: {vix_proxy:.1f})"
+            
+            return dict(data)
             
         except Exception as e:
             logger.error("kronos_oracle_failed", {"symbol": symbol, "error": str(e)})

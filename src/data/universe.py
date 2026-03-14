@@ -316,12 +316,21 @@ class UniverseManager:
         # Active universe (all criteria met)
         active = list(set(available) & set(liquid) & set(with_history))
         
-        # Cold start (new components with data but insufficient history)
-        cold_start = list(set(available) & set(liquid) - set(with_history))
+        # Missing from existing data entirely
+        missing = list(set(base_tickers) - set(available))
+        
+        # Cold start (new components with data but insufficient history/liquidity, PLUS missing ones)
+        cold_start_existing = list((set(available) - set(active)))
+        cold_start = list(set(cold_start_existing) | set(missing))
+        
+        # The 'symbols' list here is what the INGESTER will download.
+        # It needs both active and cold_start to ensure we collect data for future active use.
+        all_symbols_to_fetch = list(set(active) | set(cold_start))
         
         # Build info
         info = {
-            'symbols': sorted(active),
+            'symbols': sorted(all_symbols_to_fetch),
+            'active': sorted(active), # Add explicit active list for signal generation
             'cold_start': sorted(cold_start),
             'count': len(active),
             'cold_start_count': len(cold_start),

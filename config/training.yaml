@@ -80,6 +80,52 @@ catboost:
   early_stopping_rounds: 50
   verbose: 100
 
+# =============================================================================
+# LTR (Learning to Rank) Configuration — Phase H
+# =============================================================================
+# Cross-sectional ranking optimization using LambdaRank.
+# Groups stocks by date (query group), ranks by forward return quantile.
+# Inherits OR5 RED LINE constraints from lightgbm block.
+# =============================================================================
+ltr:
+  enabled: false  # Set true to activate LTR mode (default: binary classification)
+  objective: lambdarank
+  metric: ndcg
+  eval_at: [5, 10]  # NDCG@5 and NDCG@10
+  lambdarank_truncation_level: 10  # Only optimize ranking of top-10 items
+  boosting_type: gbdt
+
+  # OR5 RED LINE PARAMETERS (adjusted for Phase I+ larger feature set)
+  max_depth: 3            # LOCKED — OR5 red line
+  num_leaves: 15           # Increased from 7: need more splits for 50 features
+  min_data_in_leaf: 100   # LOCKED — OR5 red line
+  feature_fraction: 0.6   # Increased from 0.5: more features need wider sampling
+  bagging_fraction: 0.7
+  bagging_freq: 5
+  learning_rate: 0.01
+  lambda_l1: 1.0
+  n_estimators: 800       # Increased from 500: more iterations for richer features
+  early_stopping_rounds: 50
+  verbose: -1
+
+  # LTR-specific label settings
+  label_settings:
+    forward_return_days: 5  # N-day forward return for ranking target
+    n_quantile_bins: 5      # 5 bins: 0=worst, 4=best (quintile ranking)
+    # Use raw return percentile as continuous relevance score
+    use_raw_percentile: false  # true=percentile [0,100], false=quantile bins [0,4]
+
+  # Inference settings (for daily_job.py)
+  inference:
+    top_k: 10  # Only execute trades for top-K ranked stocks per day
+    min_rank_score: 2  # Minimum predicted relevance (out of n_quantile_bins-1)
+
+  # Kronos-as-Feature settings (Phase H-3: governance model B)
+  kronos_features:
+    enabled: true  # Inject kronos_pred_return and kronos_confidence as LTR features
+    fallback_value: null  # NaN when Kronos is offline (LightGBM handles NaN natively)
+    cache_dir: data/cache/kronos/  # Directory for daily Kronos prediction cache
+
 # Cross-validation
 validation:
   # Combinatorial Purged Cross-Validation

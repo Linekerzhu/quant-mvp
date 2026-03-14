@@ -105,6 +105,12 @@ Examples:
     )
     
     parser.add_argument(
+        '--ltr',
+        action='store_true',
+        help='Use LTR (Learning to Rank) training mode instead of binary classification (Phase H)'
+    )
+    
+    parser.add_argument(
         '--verbose', '-v',
         action='store_true',
         help='Enable verbose logging'
@@ -238,10 +244,17 @@ def validate_config(config_path: str) -> bool:
             if section not in config:
                 raise ValueError(f"Missing required section: {section}")
         
-        # Check LightGBM parameters
+        # Check LightGBM parameters (both binary and LTR)
         lgb = config['lightgbm']
         assert lgb.get('max_depth', 0) <= 3, "OR5: max_depth must be <= 3"
         assert lgb.get('num_leaves', 0) <= 7, "OR5: num_leaves must be <= 7"
+        
+        # Validate LTR config if present
+        if 'ltr' in config:
+            ltr = config['ltr']
+            assert ltr.get('max_depth', 0) <= 3, "OR5: LTR max_depth must be <= 3"
+            assert ltr.get('num_leaves', 0) <= 7, "OR5: LTR num_leaves must be <= 7"
+            logger.info(f"LTR config present: enabled={ltr.get('enabled', False)}")
         
         logger.info("Configuration validation passed")
         return True
@@ -332,22 +345,32 @@ def main():
     
     logger.info(f"Using {len(features)} features")
     
-    # Run training
-    logger.info("Starting training...")
+    # Determine training mode
+    use_ltr = args.ltr or config.get('ltr', {}).get('enabled', False)
+    mode_label = 'LTR (Learning to Rank)' if use_ltr else 'Binary Classification'
+    logger.info(f"Starting training in {mode_label} mode...")
+    
     try:
         from src.models.meta_trainer import MetaTrainer
         
         trainer = MetaTrainer(config_path=args.config)
-        results = trainer.train(df, base_model, features)
         
-        # Generate and print report
-        report = trainer.generate_report(results)
-        print("\n" + report)
+        if use_ltr:
+            results = trainer.train_ltr(df, base_model, features)
+            # LTR has different metrics; print summary directly
+            print(f"\nLTR Training Complete:")
+            print(f"  NDCG@10:  {results['mean_ndcg_10']:.4f} ± {results['std_ndcg_10']:.4f}")
+            print(f"  Rank IC:  {results['mean_rank_ic']:.4f} ± {results['std_rank_ic']:.4f}")
+            print(f"  IC CV:    {results['ic_cv']:.2f}")
+        else:
+            results = trainer.train(df, base_model, features)
+            report = trainer.generate_report(results)
+            print("\n" + report)
         
         # Save results
         save_results(results, args.output)
         
-        logger.info("Training pipeline completed successfully")
+        logger.info(f"{mode_label} training pipeline completed successfully")
         
     except RuntimeError as e:
         logger.error(f"Training blocked: {e}")

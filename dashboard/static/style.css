@@ -1,0 +1,362 @@
+/* ═══════════════════════════════════════════════════════════
+   Quant MVP v6.0 — Professional Trading Terminal CSS
+   ═══════════════════════════════════════════════════════════ */
+
+:root {
+  --bg-deep: #060a14;
+  --bg-card: rgba(12, 18, 35, 0.88);
+  --bg-card-hover: rgba(18, 28, 50, 0.92);
+  --border: rgba(68, 138, 255, 0.12);
+  --border-bright: rgba(68, 138, 255, 0.25);
+  --text: #c8d0e0;
+  --text-dim: #6b7a99;
+  --text-bright: #e8edf5;
+  --accent: #448aff;
+  --accent-glow: rgba(68, 138, 255, 0.15);
+  --green: #00e676;
+  --green-dim: rgba(0, 230, 118, 0.12);
+  --red: #ff5252;
+  --red-dim: rgba(255, 82, 82, 0.12);
+  --yellow: #ffd740;
+  --yellow-dim: rgba(255, 215, 64, 0.12);
+  --font: 'Inter', -apple-system, sans-serif;
+  --mono: 'JetBrains Mono', 'SF Mono', monospace;
+  --radius: 6px;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: var(--font);
+  background: var(--bg-deep);
+  color: var(--text);
+  min-width: 1200px;
+  font-size: 12px;
+  line-height: 1.4;
+  overflow-x: hidden;
+}
+
+/* ── Header ──────────────────────────────── */
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 20px;
+  background: linear-gradient(135deg, rgba(10, 14, 26, 0.95), rgba(15, 25, 50, 0.95));
+  border-bottom: 1px solid var(--border);
+  backdrop-filter: blur(12px);
+}
+.header-brand { display: flex; align-items: center; gap: 10px; }
+.header-logo {
+  width: 30px; height: 30px; border-radius: 6px;
+  background: linear-gradient(135deg, var(--accent), #7c4dff);
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 700; font-size: 14px; color: #fff;
+}
+.header-title { font-size: 14px; font-weight: 700; color: var(--text-bright); }
+.header-subtitle { font-size: 10px; color: var(--text-dim); font-family: var(--mono); }
+.header-status { display: flex; align-items: center; gap: 8px; }
+.header-date { font-family: var(--mono); font-size: 12px; color: var(--text-dim); }
+.status-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 6px var(--green);
+  animation: pulse 2s infinite;
+}
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+/* ── Dashboard ───────────────────────────── */
+.dashboard { padding: 6px 12px 12px; }
+
+/* ── Top Stats Bar ───────────────────────── */
+.top-stats {
+  display: flex;
+  gap: 0;
+  margin-bottom: 6px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.top-stat {
+  flex: 1;
+  padding: 7px 10px;
+  text-align: center;
+  border-right: 1px solid var(--border);
+  transition: background 0.2s;
+}
+.top-stat:last-child { border-right: none; }
+.top-stat:hover { background: var(--bg-card-hover); }
+.top-stat-label { font-size: 9px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 2px; }
+.top-stat-value { font-family: var(--mono); font-size: 13px; font-weight: 600; color: var(--text-bright); }
+
+/* ── Main Content ────────────────────────── */
+.main-content {
+  display: flex;
+  gap: 6px;
+  min-height: calc(100vh - 100px);
+}
+.charts-col { flex: 65; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.data-col { flex: 35; min-width: 340px; display: flex; flex-direction: column; gap: 4px; }
+
+/* ── Chart Toolbar ───────────────────────── */
+.chart-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 5px 10px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius) var(--radius) 0 0;
+}
+.symbol-select {
+  background: rgba(30, 40, 70, 0.8);
+  color: var(--text-bright);
+  border: 1px solid var(--border-bright);
+  border-radius: 4px;
+  padding: 3px 8px;
+  font-family: var(--mono);
+  font-size: 12px;
+  cursor: pointer;
+}
+.price-label { font-family: var(--mono); font-size: 12px; font-weight: 600; }
+.chart-tabs { display: flex; gap: 2px; }
+.chart-tab {
+  background: transparent;
+  color: var(--text-dim);
+  border: 1px solid transparent;
+  border-radius: 3px;
+  padding: 2px 8px;
+  font-family: var(--mono);
+  font-size: 10px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.chart-tab:hover { color: var(--text); border-color: var(--border); }
+.chart-tab.active { color: var(--accent); border-color: var(--accent); background: var(--accent-glow); }
+
+/* ── Chart Areas ─────────────────────────── */
+.chart-main {
+  height: 340px;
+  background: var(--bg-card);
+  border-left: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+}
+.chart-sub {
+  height: 100px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-top: none;
+  border-radius: 0 0 var(--radius) var(--radius);
+  position: relative;
+}
+.chart-sub-label {
+  position: absolute;
+  top: 3px; left: 8px;
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--text-dim);
+  z-index: 5;
+  pointer-events: none;
+}
+
+/* ── Equity Section ──────────────────────── */
+.equity-section {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 4px 8px;
+}
+.section-title { font-size: 11px; font-weight: 600; color: var(--text-dim); margin-bottom: 2px; }
+
+/* ── Panels ──────────────────────────────── */
+.panel {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 6px 8px;
+  backdrop-filter: blur(8px);
+}
+.panel-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-bright);
+  margin-bottom: 4px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.panel-badge {
+  font-family: var(--mono);
+  font-size: 10px;
+  background: var(--accent-glow);
+  color: var(--accent);
+  padding: 0 6px;
+  border-radius: 8px;
+  font-weight: 500;
+}
+
+/* ── Decision Chain ──────────────────────── */
+.decision-panel { border-color: var(--border-bright); }
+
+.decision-chain {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  padding: 6px 0;
+  overflow-x: auto;
+}
+.chain-placeholder {
+  color: var(--text-dim);
+  font-size: 11px;
+  text-align: center;
+  width: 100%;
+  padding: 10px;
+}
+
+.chain-node {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 68px;
+  padding: 4px 3px;
+}
+.chain-node-name {
+  font-size: 8px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  margin-bottom: 3px;
+  white-space: nowrap;
+}
+.chain-node-badge {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+.chain-node-badge.buy {
+  background: var(--green-dim);
+  color: var(--green);
+  border: 1px solid rgba(0, 230, 118, 0.3);
+}
+.chain-node-badge.sell {
+  background: var(--red-dim);
+  color: var(--red);
+  border: 1px solid rgba(255, 82, 82, 0.3);
+}
+.chain-node-badge.neutral {
+  background: var(--yellow-dim);
+  color: var(--yellow);
+  border: 1px solid rgba(255, 215, 64, 0.3);
+}
+.chain-node-badge.inactive {
+  background: rgba(40, 50, 70, 0.5);
+  color: var(--text-dim);
+  border: 1px solid rgba(100, 120, 150, 0.2);
+}
+.chain-node-detail {
+  font-family: var(--mono);
+  font-size: 8px;
+  color: var(--text-dim);
+  margin-top: 2px;
+}
+
+.chain-arrow {
+  color: var(--text-dim);
+  font-size: 12px;
+  margin: 0 1px;
+  flex-shrink: 0;
+}
+.chain-arrow.pass { color: var(--green); }
+.chain-arrow.fail { color: var(--red); }
+
+/* ── Key Factors ─────────────────────────── */
+.key-factors {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid var(--border);
+}
+.factor-chip {
+  font-family: var(--mono);
+  font-size: 9px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(30, 40, 65, 0.6);
+  border: 1px solid var(--border);
+  display: flex;
+  gap: 3px;
+  align-items: center;
+}
+.factor-chip .fc-label { color: var(--text-dim); }
+.factor-chip .fc-value { color: var(--text-bright); font-weight: 500; }
+
+/* ── Data Tables ─────────────────────────── */
+.table-scroll {
+  max-height: 180px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-bright) transparent;
+}
+.table-scroll::-webkit-scrollbar { width: 4px; }
+.table-scroll::-webkit-scrollbar-thumb { background: var(--border-bright); border-radius: 2px; }
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 10px;
+}
+.data-table th {
+  font-size: 9px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  padding: 3px 4px;
+  border-bottom: 1px solid var(--border);
+  text-align: right;
+  font-weight: 500;
+  position: sticky;
+  top: 0;
+  background: var(--bg-card);
+  z-index: 2;
+}
+.data-table th:first-child { text-align: left; }
+.data-table td {
+  padding: 2px 4px;
+  border-bottom: 1px solid rgba(68, 138, 255, 0.05);
+  font-family: var(--mono);
+  font-size: 10px;
+  text-align: right;
+  color: var(--text);
+}
+.data-table td:first-child { text-align: left; color: var(--text-bright); font-weight: 500; }
+.data-table tr:hover td { background: rgba(68, 138, 255, 0.04); }
+.data-table tr.holding-row { cursor: pointer; }
+.data-table tr.holding-row:hover td { background: var(--accent-glow); }
+.data-table tr.holding-row.active td { background: rgba(68, 138, 255, 0.1); border-color: var(--accent); }
+.data-table .empty { text-align: center; color: var(--text-dim); padding: 12px; }
+
+/* P&L colors */
+.pnl-pos { color: var(--green) !important; }
+.pnl-neg { color: var(--red) !important; }
+
+/* Action badges */
+.action-buy { color: var(--green); font-weight: 600; }
+.action-sell { color: var(--red); font-weight: 600; }
+
+/* ── Utility ─────────────────────────────── */
+.text-green { color: var(--green); }
+.text-red { color: var(--red); }
+.text-yellow { color: var(--yellow); }
+.text-dim { color: var(--text-dim); }
+
+/* ── Responsive overflow ─────────────────── */
+@media (max-width: 1400px) {
+  .data-col { min-width: 300px; }
+  .chart-main { height: 280px; }
+}

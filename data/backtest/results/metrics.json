@@ -1,0 +1,21 @@
+{
+  "period": "2019-07-01 \u2192 2026-03-06",
+  "strategy": "multifactor_monthly",
+  "factors": "70%Mom + 15%Qual + 15%Val",
+  "trading_days": 1618,
+  "total_trades": 1764,
+  "final_nav": 146217.8,
+  "total_return_pct": 46.22,
+  "annual_return_pct": 6.19,
+  "annual_vol_pct": 18.02,
+  "sharpe": 0.344,
+  "max_dd_pct": 39.1,
+  "calmar": 0.158,
+  "win_rate_pct": 54.6,
+  "profit_factor": 1.415,
+  "total_friction": 16784.4,
+  "avg_positions": 15.0,
+  "ml_timing": "enabled",
+  "vix_protection": "enabled",
+  "sector_cap": "25%"
+}

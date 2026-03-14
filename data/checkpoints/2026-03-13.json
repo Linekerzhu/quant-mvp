@@ -1,0 +1,48 @@
+{
+  "ingest": {
+    "rows": 89188,
+    "symbols": 516
+  },
+  "validate": {
+    "passed": false
+  },
+  "integrity": {
+    "drifts": 12715
+  },
+  "corporate_actions": {
+    "splits_detected": "0",
+    "delistings_detected": 0,
+    "suspensions_detected": "0",
+    "delistings": {}
+  },
+  "universe": {
+    "base_tickers": 517,
+    "with_data": 516,
+    "liquid": 516,
+    "sufficient_history": 516,
+    "survivorship_bias_method": "current_components_with_disclosure"
+  },
+  "features": {
+    "rows": 89188
+  },
+  "signals": {
+    "active_signals": 214
+  },
+  "risk_and_size": {
+    "target_count": 36
+  },
+  "execute": {
+    "status": "executed",
+    "orders": 14,
+    "nav": 100000.0,
+    "cash": 73350.47,
+    "realized_pnl": 0.0
+  },
+  "virtual_portfolio": {
+    "trades": 17,
+    "nav": 99754.96,
+    "cumulative_pnl": -245.04,
+    "cumulative_return": "-0.25%",
+    "friction_today": 82.8
+  }
+}

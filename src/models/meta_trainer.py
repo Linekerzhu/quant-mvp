@@ -800,6 +800,492 @@ class MetaTrainer:
         
         return "\n".join(lines)
 
+    # =========================================================================
+    # Phase H: Learning to Rank (LTR) Branch
+    # =========================================================================
+
+    def _build_ltr_labels(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Build cross-sectional ranking labels for LTR training.
+        
+        For each trading date T, compute the forward N-day return for each stock,
+        then assign a quintile rank (0=worst, 4=best) as the LTR relevance label.
+        
+        AUDIT H-A1: Forward returns use shift(-N) on adj_close. The label at date T
+        is based on price at T+N, which is strictly future data. This is correct
+        for training labels but must NEVER leak into features.
+        
+        Args:
+            df: DataFrame with columns ['symbol', 'date', 'adj_close']
+            
+        Returns:
+            DataFrame with added columns: 'fwd_return', 'ltr_label', 'query_group'
+        """
+        ltr_config = self.config.get('ltr', {})
+        label_settings = ltr_config.get('label_settings', {})
+        fwd_days = label_settings.get('forward_return_days', 5)
+        n_bins = label_settings.get('n_quantile_bins', 5)
+        use_raw_pct = label_settings.get('use_raw_percentile', False)
+        
+        df = df.copy()
+        
+        # Step 1: Compute per-symbol forward return
+        # AUDIT H-A1: shift(-fwd_days) creates T+N look-ahead — this is the label, NOT a feature
+        df['fwd_return'] = df.groupby('symbol')['adj_close'].transform(
+            lambda x: x.shift(-fwd_days) / x - 1.0
+        )
+        
+        # Drop rows where forward return is unavailable (last N days per symbol)
+        n_before = len(df)
+        df = df.dropna(subset=['fwd_return'])
+        logger.info(f"LTR labels: dropped {n_before - len(df)} rows without forward returns "
+                    f"(last {fwd_days} days per symbol)")
+        
+        # Step 2: Cross-sectional ranking per date
+        # AUDIT H-A2: query_group is the date index — each date forms one query group
+        if use_raw_pct:
+            # Continuous percentile [0, 100]
+            df['ltr_label'] = df.groupby('date')['fwd_return'].transform(
+                lambda x: x.rank(pct=True) * 100
+            ).astype(int)
+        else:
+            # Quantile bins [0, n_bins-1]
+            df['ltr_label'] = df.groupby('date')['fwd_return'].transform(
+                lambda x: pd.qcut(x, q=n_bins, labels=False, duplicates='drop')
+                if len(x) >= n_bins else pd.Series(
+                    [n_bins // 2] * len(x), index=x.index  # default to median bin
+                )
+            )
+            # Fill NaN from qcut edge cases
+            df['ltr_label'] = df['ltr_label'].fillna(n_bins // 2).astype(int)
+        
+        # Step 3: Assign query group IDs (monotonically increasing integers per unique date)
+        date_to_qid = {d: i for i, d in enumerate(sorted(df['date'].unique()))}
+        df['query_group'] = df['date'].map(date_to_qid)
+        
+        # Validation
+        n_dates = df['query_group'].nunique()
+        avg_group_size = len(df) / max(n_dates, 1)
+        logger.info(f"LTR labels built: {len(df)} samples, {n_dates} query groups, "
+                    f"avg group size={avg_group_size:.1f}, bins={n_bins}")
+        
+        # Sanity check: label distribution should be roughly uniform
+        label_dist = df['ltr_label'].value_counts().sort_index()
+        logger.info(f"LTR label distribution: {dict(label_dist)}")
+        
+        return df
+    
+    def _build_ltr_query_groups(self, df: pd.DataFrame) -> np.ndarray:
+        """
+        Build LightGBM query group array from query_group column.
+        
+        LightGBM expects an array where element i = number of items in group i.
+        Data MUST be sorted by query_group.
+        
+        AUDIT H-A2: This must be perfectly aligned with the DataFrame order.
+        
+        Args:
+            df: DataFrame sorted by query_group, with 'query_group' column
+            
+        Returns:
+            numpy array of group sizes
+        """
+        # AUDIT A1: Verify DataFrame is sorted by query_group
+        qg_vals = df['query_group'].values
+        assert np.all(qg_vals[:-1] <= qg_vals[1:]), \
+            "AUDIT A1 FAIL: DataFrame must be sorted by query_group before building groups"
+        
+        groups = df.groupby('query_group').size().values
+        assert groups.sum() == len(df), \
+            f"Query group mismatch: sum(groups)={groups.sum()} != len(df)={len(df)}"
+        return groups
+    
+    def _train_ltr_fold(
+        self,
+        train_df: pd.DataFrame,
+        test_df: pd.DataFrame,
+        features: list,
+        ltr_params: dict,
+    ) -> dict:
+        """
+        Train a single LTR fold with LambdaRank.
+        
+        Args:
+            train_df: Training data (sorted by query_group)
+            test_df: Test data (sorted by query_group)
+            features: Feature column names
+            ltr_params: LightGBM LTR parameters
+            
+        Returns:
+            Dictionary with LTR training results
+        """
+        import lightgbm as lgb
+        
+        # Drop NaN in features
+        train_df = train_df.dropna(subset=features)
+        test_df = test_df.dropna(subset=features)
+        
+        if len(train_df) < 50 or len(test_df) < 10:
+            # AUDIT A2: Use proper logger format (EventLogger may not accept dict arg)
+            logger.info(f"LTR WARNING: insufficient data — n_train={len(train_df)}, n_test={len(test_df)}")
+        
+        # Ensure sorted by query_group (critical for LambdaRank)
+        train_df = train_df.sort_values('query_group').reset_index(drop=True)
+        test_df = test_df.sort_values('query_group').reset_index(drop=True)
+        
+        X_train = train_df[features]
+        y_train = train_df['ltr_label']
+        X_test = test_df[features]
+        y_test = test_df['ltr_label']
+        
+        # Build query groups
+        train_groups = self._build_ltr_query_groups(train_df)
+        test_groups = self._build_ltr_query_groups(test_df)
+        
+        # Extract callback params from ltr_params copy
+        ltr_params = ltr_params.copy()
+        n_estimators = ltr_params.pop('n_estimators', 500)
+        early_stopping = ltr_params.pop('early_stopping_rounds', 50)
+        
+        # Split inner_train / validation for early stopping (time-based)
+        # Use last 20% of unique query groups as validation
+        train_qgroups = train_df['query_group'].unique()
+        n_qgroups = len(train_qgroups)
+        val_qgroup_count = max(int(n_qgroups * 0.2), 1)
+        val_qgroup_start = train_qgroups[-(val_qgroup_count)]
+        
+        inner_mask = train_df['query_group'] < val_qgroup_start
+        val_mask = train_df['query_group'] >= val_qgroup_start
+        
+        X_inner = train_df.loc[inner_mask, features]
+        y_inner = train_df.loc[inner_mask, 'ltr_label']
+        inner_groups = self._build_ltr_query_groups(train_df[inner_mask])
+        
+        X_val = train_df.loc[val_mask, features]
+        y_val = train_df.loc[val_mask, 'ltr_label']
+        val_groups = self._build_ltr_query_groups(train_df[val_mask])
+        
+        # Create LightGBM datasets
+        train_data = lgb.Dataset(X_inner, label=y_inner, group=inner_groups)
+        valid_data = lgb.Dataset(X_val, label=y_val, group=val_groups, 
+                                 reference=train_data)
+        
+        # Train LambdaRank model
+        model = lgb.train(
+            ltr_params,
+            train_data,
+            num_boost_round=n_estimators,
+            valid_sets=[valid_data],
+            valid_names=['valid'],
+            callbacks=[lgb.early_stopping(early_stopping, verbose=False)]
+        )
+        
+        # Predictions on test set
+        y_pred_scores = model.predict(X_test, num_iteration=model.best_iteration)
+        
+        # Evaluate: NDCG and IC (Information Coefficient)
+        from scipy.stats import spearmanr
+        
+        # Per-group NDCG calculation
+        ndcg_scores = []
+        ic_scores = []
+        test_qgroups_unique = test_df['query_group'].unique()
+        
+        for qg in test_qgroups_unique:
+            qg_mask = test_df['query_group'] == qg
+            true_labels = y_test[qg_mask].values
+            pred_scores = y_pred_scores[qg_mask]
+            
+            if len(true_labels) < 2:
+                continue
+            
+            # NDCG@10
+            ndcg = self._calc_ndcg(true_labels, pred_scores, k=10)
+            ndcg_scores.append(ndcg)
+            
+            # Rank IC (Spearman correlation)
+            rho, _ = spearmanr(true_labels, pred_scores)
+            if not np.isnan(rho):
+                ic_scores.append(rho)
+        
+        mean_ndcg = np.mean(ndcg_scores) if ndcg_scores else 0.0
+        mean_ic = np.mean(ic_scores) if ic_scores else 0.0
+        ic_std = np.std(ic_scores) if ic_scores else 0.0
+        
+        # Feature importance
+        importance = dict(zip(features, model.feature_importance(importance_type='gain')))
+        
+        return {
+            'ndcg_10': mean_ndcg,
+            'rank_ic': mean_ic,
+            'ic_std': ic_std,
+            'ic_ir': mean_ic / ic_std if ic_std > 0 else 0.0,
+            'best_iteration': model.best_iteration,
+            'feature_importance': importance,
+            'n_train': len(train_df),
+            'n_test': len(test_df),
+            'n_query_groups_train': len(train_qgroups),
+            'n_query_groups_test': len(test_qgroups_unique),
+        }
+    
+    @staticmethod
+    def _calc_ndcg(true_labels: np.ndarray, pred_scores: np.ndarray, k: int = 10) -> float:
+        """
+        Calculate NDCG@k for a single query group.
+        
+        Args:
+            true_labels: Ground truth relevance labels
+            pred_scores: Predicted scores
+            k: Truncation level
+            
+        Returns:
+            NDCG@k score
+        """
+        # Sort by predicted scores (descending)
+        order = np.argsort(-pred_scores)[:k]
+        dcg = np.sum((2**true_labels[order] - 1) / np.log2(np.arange(2, len(order) + 2)))
+        
+        # Ideal DCG
+        ideal_order = np.argsort(-true_labels)[:k]
+        idcg = np.sum((2**true_labels[ideal_order] - 1) / np.log2(np.arange(2, len(ideal_order) + 2)))
+        
+        return dcg / idcg if idcg > 0 else 0.0
+    
+    def train_ltr(
+        self,
+        df: pd.DataFrame,
+        base_model,
+        features: list,
+        price_col: str = 'adj_close'
+    ) -> dict:
+        """
+        Execute the complete LTR (Learning to Rank) training pipeline.
+        
+        This is the Phase H counterpart of train(). Instead of binary classification,
+        it trains a LambdaRank model to predict cross-sectional stock rankings.
+        
+        Args:
+            df: DataFrame with features and labels
+            base_model: Base model instance for signal generation
+            features: List of feature column names
+            price_col: Price column name for FracDiff
+            
+        Returns:
+            Dictionary with LTR training results
+        """
+        from src.models.purged_kfold import CombinatorialPurgedKFold
+        
+        logger.info("=" * 60)
+        logger.info("Starting LTR (Learning to Rank) Training Pipeline — Phase H")
+        logger.info("=" * 60)
+        
+        # Step 1: Generate base signals (same as binary pipeline)
+        logger.info("LTR Step 1: Generating Base Model signals...")
+        df_signals = self._generate_base_signals(df, base_model)
+        
+        # Step 2: Build LTR labels (cross-sectional ranking)
+        logger.info("LTR Step 2: Building cross-sectional ranking labels...")
+        df_ltr = self._build_ltr_labels(df_signals)
+        
+        # Step 3: FracDiff (reuse existing logic)
+        logger.info("LTR Step 3: Computing per-symbol FracDiff...")
+        fracdiff_config = self.config.get('fracdiff', {})
+        window = fracdiff_config.get('window', 100)
+        threshold = fracdiff_config.get('threshold', 0.05)
+        default_d = fracdiff_config.get('default_d', 0.5)
+        
+        from src.features.fracdiff import find_min_d_stationary, fracdiff_fixed_window
+        
+        df_ltr = df_ltr.copy()
+        df_ltr['fracdiff'] = np.nan
+        per_symbol_d = {}
+        
+        for symbol in df_ltr['symbol'].unique():
+            sym_mask = df_ltr['symbol'] == symbol
+            sym_prices = np.log(df_ltr.loc[sym_mask, price_col])
+            
+            if len(sym_prices) < window:
+                df_ltr.loc[sym_mask, 'fracdiff'] = 0.0
+                per_symbol_d[symbol] = 0.0
+                continue
+            
+            try:
+                sym_d = find_min_d_stationary(sym_prices, threshold=threshold)
+            except Exception:
+                sym_d = default_d
+            
+            try:
+                sym_fd = fracdiff_fixed_window(sym_prices, sym_d, window)
+                df_ltr.loc[sym_mask, 'fracdiff'] = sym_fd.values
+            except Exception:
+                df_ltr.loc[sym_mask, 'fracdiff'] = 0.0
+                per_symbol_d[symbol] = 0.0
+                continue
+            
+            per_symbol_d[symbol] = sym_d
+        
+        features_with_fracdiff = features + ['fracdiff']
+        
+        # Step 4: Filter invalid samples
+        # LTR keeps ALL side values (including side=0) because ranking is universal
+        if 'event_valid' in df_ltr.columns:
+            df_ltr = df_ltr[df_ltr['event_valid'] == True].copy()
+        
+        # Drop NaN in features
+        df_ltr = df_ltr.dropna(subset=features_with_fracdiff)
+        
+        # AUDIT A4: Defensive check — fwd_return must NOT be in feature list
+        if 'fwd_return' in features_with_fracdiff:
+            raise ValueError("AUDIT A4 FAIL: 'fwd_return' found in features — this would be "
+                           "look-ahead bias! Remove it from the feature list.")
+        
+        logger.info(f"LTR: {len(df_ltr)} samples after filtering")
+        
+        if len(df_ltr) < 200:
+            raise ValueError(f"Insufficient LTR samples: {len(df_ltr)} < 200")
+        
+        # Ensure sorted by date for CPCV alignment
+        df_ltr = df_ltr.sort_values('date').reset_index(drop=True)
+        
+        # CPCV requires label_exit_date for purge/embargo.
+        # For LTR, the label dependency period is date + fwd_days (forward return horizon).
+        # This tells the purge window exactly which future dates each sample's label depends on.
+        ltr_config = self.config.get('ltr', {})
+        fwd_days = ltr_config.get('label_settings', {}).get('forward_return_days', 5)
+        from pandas.tseries.offsets import BDay
+        df_ltr['label_exit_date'] = df_ltr['date'] + BDay(fwd_days)
+        logger.info(f"LTR: Set label_exit_date = date + {fwd_days} BDay for CPCV purge")
+        
+        # Step 5: Prepare LTR params
+        # AUDIT A3: ltr_config already loaded at line ~1144, reuse it
+        ltr_params = {
+            'objective': ltr_config.get('objective', 'lambdarank'),
+            'metric': ltr_config.get('metric', 'ndcg'),
+            'eval_at': ltr_config.get('eval_at', [5, 10]),
+            'lambdarank_truncation_level': ltr_config.get('lambdarank_truncation_level', 10),
+            'boosting_type': ltr_config.get('boosting_type', 'gbdt'),
+            'max_depth': ltr_config.get('max_depth', 3),
+            'num_leaves': ltr_config.get('num_leaves', 7),
+            'min_data_in_leaf': ltr_config.get('min_data_in_leaf', 100),
+            'feature_fraction': ltr_config.get('feature_fraction', 0.5),
+            'bagging_fraction': ltr_config.get('bagging_fraction', 0.7),
+            'bagging_freq': ltr_config.get('bagging_freq', 5),
+            'learning_rate': ltr_config.get('learning_rate', 0.01),
+            'lambda_l1': ltr_config.get('lambda_l1', 1.0),
+            'n_estimators': ltr_config.get('n_estimators', 500),
+            'early_stopping_rounds': ltr_config.get('early_stopping_rounds', 50),
+            'verbose': ltr_config.get('verbose', -1),
+        }
+        
+        # AUDIT H-A3: Validate OR5 constraints on LTR params
+        # max_depth and min_data_in_leaf are the hard red lines.
+        # num_leaves is relaxed to 2^(max_depth+1)-1 to support larger feature sets.
+        if ltr_params.get('max_depth', 0) > 5:
+            raise ValueError(f"OR5 VIOLATION in LTR: max_depth={ltr_params['max_depth']} > 5")
+        if ltr_params.get('num_leaves', 0) > 31:
+            raise ValueError(f"OR5 VIOLATION in LTR: num_leaves={ltr_params['num_leaves']} > 31")
+        if ltr_params.get('min_data_in_leaf', 0) < 50:
+            raise ValueError(f"OR5 VIOLATION in LTR: min_data_in_leaf={ltr_params['min_data_in_leaf']} < 50")
+        
+        # Add reproducibility seeds
+        ltr_params['seed'] = 42
+        ltr_params['bagging_seed'] = 42
+        ltr_params['feature_fraction_seed'] = 42
+        
+        # Step 6: CPCV Training Loop
+        logger.info("LTR Step 6: CPCV Training Loop...")
+        cpcv = CombinatorialPurgedKFold.from_config(self.config)
+        n_paths = cpcv.get_n_paths()
+        
+        path_results = []
+        for path_idx, (train_idx, test_idx) in enumerate(cpcv.split(df_ltr), 1):
+            logger.info(f"  LTR Path {path_idx}/{n_paths}: "
+                       f"train={len(train_idx)}, test={len(test_idx)}")
+            
+            train_fold = df_ltr.iloc[train_idx].copy()
+            test_fold = df_ltr.iloc[test_idx].copy()
+            
+            result = self._train_ltr_fold(
+                train_fold, test_fold, features_with_fracdiff, ltr_params
+            )
+            result['path_idx'] = path_idx
+            path_results.append(result)
+        
+        if not path_results:
+            raise RuntimeError("LTR: No CPCV paths completed")
+        
+        # Step 7: Aggregate and validate
+        ndcg_scores = [r['ndcg_10'] for r in path_results]
+        ic_scores = [r['rank_ic'] for r in path_results]
+        
+        mean_ndcg = np.mean(ndcg_scores)
+        mean_ic = np.mean(ic_scores)
+        ic_std = np.std(ic_scores)
+        ic_cv = ic_std / abs(mean_ic) if abs(mean_ic) > 1e-6 else float('inf')
+        
+        logger.info("=" * 60)
+        logger.info("LTR Training Results:")
+        logger.info(f"  NDCG@10:  {mean_ndcg:.4f} ± {np.std(ndcg_scores):.4f}")
+        logger.info(f"  Rank IC:  {mean_ic:.4f} ± {ic_std:.4f}")
+        logger.info(f"  IC CV:    {ic_cv:.2f}")
+        logger.info(f"  IC IR:    {np.mean([r['ic_ir'] for r in path_results]):.4f}")
+        logger.info("=" * 60)
+        
+        # Step 8: Train final model on full data
+        logger.info("LTR Step 8: Training final model on full data...")
+        try:
+            import lightgbm as lgb
+            
+            df_ltr_sorted = df_ltr.sort_values('query_group').reset_index(drop=True)
+            X_full = df_ltr_sorted[features_with_fracdiff]
+            y_full = df_ltr_sorted['ltr_label']
+            full_groups = self._build_ltr_query_groups(df_ltr_sorted)
+            
+            final_ltr_params = ltr_params.copy()
+            final_ltr_params.pop('n_estimators', 500)  # AUDIT A7: remove but don't assign
+            final_ltr_params.pop('early_stopping_rounds', None)
+            
+            best_iters = [r['best_iteration'] for r in path_results if r['best_iteration'] > 1]
+            final_rounds = int(0.8 * np.median(best_iters)) if best_iters else 50
+            final_rounds = max(final_rounds, 20)
+            
+            train_data = lgb.Dataset(X_full, label=y_full, group=full_groups)
+            final_model = lgb.train(final_ltr_params, train_data, num_boost_round=final_rounds)
+            
+            logger.info(f"LTR final model trained: {final_rounds} rounds, {len(X_full)} samples")
+            
+            # Save model
+            from src.models.model_io import ModelBundleManager
+            mgr = ModelBundleManager()
+            metadata = {
+                "feature_list": features_with_fracdiff,
+                "optimal_d": per_symbol_d,
+                "model_type": "ltr",
+                "ltr_config": ltr_config.get('label_settings', {}),
+            }
+            mgr.save_bundle(final_model, metadata)
+            
+        except Exception as e:
+            logger.warn(f"LTR final model training failed: {e}")
+            final_model = None
+        
+        results = {
+            'model_type': 'ltr',
+            'paths': path_results,
+            'n_paths': len(path_results),
+            'optimal_d': per_symbol_d,
+            'mean_ndcg_10': mean_ndcg,
+            'std_ndcg_10': np.std(ndcg_scores),
+            'mean_rank_ic': mean_ic,
+            'std_rank_ic': ic_std,
+            'ic_cv': ic_cv,
+            'model': final_model,
+            'feature_list': features_with_fracdiff,
+            'n_training_samples': len(df_ltr),
+        }
+        
+        return results
+
 
 # Convenience function for quick training
 def train_meta_model(
@@ -821,4 +1307,11 @@ def train_meta_model(
         Training results
     """
     trainer = MetaTrainer(config_path)
-    return trainer.train(df, base_model, features)
+    
+    # Check if LTR mode is enabled
+    config = trainer.config
+    if config.get('ltr', {}).get('enabled', False):
+        return trainer.train_ltr(df, base_model, features)
+    else:
+        return trainer.train(df, base_model, features)
+

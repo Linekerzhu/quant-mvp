@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Daily Job Runner with LLM-Enhanced Telegram Notification (v3 — Decision-Story)
+Daily Job Runner with LLM-Enhanced Telegram Notification (v5 — Factor Strategy)
 
 Runs daily_job.py, collects each surviving stock's full decision path,
 sends to DeepSeek LLM to narrate WHY each stock was chosen.
@@ -13,6 +13,15 @@ import requests
 import pandas as pd
 import json
 from datetime import datetime
+import warnings
+
+# Suppress urllib3 SSL warnings on Mac
+warnings.filterwarnings("ignore", module="urllib3")
+try:
+    from urllib3.exceptions import NotOpenSSLWarning
+    warnings.filterwarnings("ignore", category=NotOpenSSLWarning)
+except ImportError:
+    pass
 
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 
@@ -90,31 +99,58 @@ def read_targets(trade_date):
     return None
 
 def read_portfolio_summary():
-    path = os.path.join(PROJECT_ROOT, 'data/portfolio/state.json')
+    """Read portfolio state from VirtualBroker (primary) or old PortfolioTracker (fallback)."""
+    # Primary: VirtualBroker independent account
+    broker_path = os.path.join(PROJECT_ROOT, 'data/broker_api/account_state.json')
+    # Fallback: old PortfolioTracker
+    legacy_path = os.path.join(PROJECT_ROOT, 'data/portfolio/state.json')
+    
+    path = broker_path if os.path.exists(broker_path) else legacy_path
     if not os.path.exists(path):
         return None
+    
     with open(path, 'r') as f:
         state = json.load(f)
-    history = state.get('history', [])
-    if not history:
-        return None
-    nav = history[-1]['nav']
+    
+    # VirtualBroker uses 'holdings', PortfolioTracker uses 'positions'
+    holdings = state.get('holdings', state.get('positions', {}))
+    cash = state.get('cash', 0)
     initial = state.get('initial_cash', 100000)
+    realized_pnl = state.get('realized_pnl', 0)
+    
+    # Calculate NAV from holdings (mark-to-market at cost if no prices available yet)
+    positions_value = sum(
+        pos.get('qty', 0) * pos.get('avg_cost', 0) 
+        for pos in holdings.values()
+    )
+    
+    # Try to get NAV from history if available (more accurate)
+    history = state.get('history', [])
+    if history:
+        nav = history[-1].get('nav', cash + positions_value)
+    else:
+        nav = cash + positions_value
+    
+    # Max drawdown
     peak = initial
     max_dd = 0
     for snap in history:
-        if snap['nav'] > peak: peak = snap['nav']
-        dd = (peak - snap['nav']) / peak
+        snap_nav = snap.get('nav', initial)
+        if snap_nav > peak: peak = snap_nav
+        dd = (peak - snap_nav) / peak
         if dd > max_dd: max_dd = dd
+    
     return {
         'nav': nav, 'initial': initial,
         'cum_return': (nav / initial - 1) * 100,
         'max_dd': max_dd * 100,
-        'trading_days': len(history),
-        'total_trades': state.get('trade_count', 0),
+        'trading_days': len(history) if history else 0,
+        'total_trades': state.get('trade_count', len(state.get('history', []))),
         'total_friction': state.get('total_friction_paid', 0),
-        'positions': len(state.get('positions', {})),
-        'cash': state.get('cash', 0),
+        'realized_pnl': realized_pnl,
+        'positions': len(holdings),
+        'positions_detail': holdings,
+        'cash': cash,
     }
 
 def get_latest_prices(trade_date):
@@ -167,40 +203,27 @@ def collect_report_data(trade_date, elapsed, returncode, stderr):
 
     # ── Pipeline funnel summary (just counts, no stock lists) ──
     funnel = {}
-    if signals_df is not None and len(signals_df) > 0:
-        total_sigs = len(signals_df)
-        unique_syms = signals_df['symbol'].nunique()
-        buy_sigs = len(signals_df[signals_df['side'] > 0])
-        sell_sigs = len(signals_df[signals_df['side'] < 0])
+    funnel_path = os.path.join(PROJECT_ROOT, f'data/processed/funnel_stats_{trade_date}.json')
+    if os.path.exists(funnel_path):
+        try:
+            with open(funnel_path, "r") as f:
+                funnel = json.load(f)
+        except:
+            pass
 
-        # Count conflicting symbols (both buy+sell from dual model)
-        conflict_count = 0
-        for sym in signals_df['symbol'].unique():
-            sides = signals_df[signals_df['symbol'] == sym]['side'].unique()
-            if 1 in sides and -1 in sides:
-                conflict_count += 1
-
-        funnel["total_signals"] = total_sigs
-        funnel["unique_symbols_with_signals"] = unique_syms
-        funnel["buy_signals"] = buy_sigs
-        funnel["sell_signals"] = sell_sigs
-        funnel["dual_model_conflicts"] = conflict_count
-
-    oracle_vetoed = 0
-    if targets_df is not None and 'oracle_action' in targets_df.columns:
-        if signals_df is not None:
-            signal_syms = set(signals_df['symbol'].unique())
-            target_syms = set(targets_df['symbol'].unique())
-            oracle_vetoed = len(signal_syms - target_syms)
-    funnel["oracle_vetoed"] = oracle_vetoed
-
-    zero_weight = 0
-    actionable_count = 0
-    if targets_df is not None and 'target_weight' in targets_df.columns:
-        actionable_count = int((targets_df['target_weight'].abs() >= 0.005).sum())
-        zero_weight = len(targets_df) - actionable_count
-    funnel["zero_weight_filtered"] = zero_weight
-    funnel["final_actionable"] = actionable_count
+    # Provide fallback metrics if not provided by JSON
+    if "total_base_signals" not in funnel:
+        funnel["total_base_signals"] = len(signals_df) if signals_df is not None else 0
+    if "passed_meta_model" not in funnel:
+        funnel["passed_meta_model"] = len(signals_df) if signals_df is not None else 0
+    if "passed_consensus" not in funnel:
+        funnel["passed_consensus"] = len(signals_df) if signals_df is not None else 0
+    if "oracle_vetoed" not in funnel:
+        funnel["oracle_vetoed"] = 0
+    if "passed_sizing" not in funnel:
+        funnel["passed_sizing"] = 0
+        if targets_df is not None and 'target_weight' in targets_df.columns:
+            funnel["passed_sizing"] = int((targets_df['target_weight'].abs() >= 0.005).sum())
 
     data["funnel"] = funnel
 
@@ -215,7 +238,21 @@ def collect_report_data(trade_date, elapsed, returncode, stderr):
             sym = r['symbol']
             w = float(r['target_weight'])
             price = prices.get(sym, 0)
-            qty = int(abs(w) * nav / price) if price > 0 else 0
+            target_qty = int(abs(w) * nav / price) if price > 0 else 0
+            
+            existing_qty = 0
+            if perf and 'positions_detail' in perf and sym in perf['positions_detail']:
+                existing_qty = perf['positions_detail'][sym].get('qty', 0)
+                
+            delta_qty = target_qty - existing_qty
+            if w < 0:
+                delta_qty = -target_qty - existing_qty
+                
+            if delta_qty == 0:
+                continue
+
+            qty = abs(delta_qty)
+            direction = "BUY" if delta_qty > 0 else "SELL"
 
             # Trace back: what did the dual models say about this stock?
             signal_detail = None
@@ -256,13 +293,35 @@ def collect_report_data(trade_date, elapsed, returncode, stderr):
 
             orders.append({
                 "symbol": sym,
-                "direction": "BUY" if w > 0 else "SELL",
+                "direction": direction,
                 "weight_pct": round(w * 100, 2),
                 "price_usd": round(price, 2) if price > 0 else None,
                 "shares": qty,
                 "signal": signal_detail,
                 "oracle": oracle_detail,
             })
+
+
+        # Also need to check if there are sells from positions NOT in targets at all
+        if perf and 'positions_detail' in perf:
+            for sym, pos_data in perf['positions_detail'].items():
+                if sym not in actionable['symbol'].values:
+                    existing_qty = pos_data.get('qty', 0)
+                    if existing_qty > 0:
+                        price = prices.get(sym, 0)
+                        
+                        signal_detail = {"signal_direction": "close"}
+                        oracle_detail = None
+                        
+                        orders.append({
+                            "symbol": sym,
+                            "direction": "SELL",
+                            "weight_pct": 0.0,
+                            "price_usd": round(price, 2) if price > 0 else None,
+                            "shares": existing_qty,
+                            "signal": signal_detail,
+                            "oracle": oracle_detail,
+                        })
 
     data["orders"] = orders
     data["portfolio"] = perf
@@ -276,6 +335,12 @@ REPORT_PROMPT = """你是一个量化交易系统的日报生成器。基于下�
 
 **核心原则：以最终入选的每只股票为叙事主线，讲清楚"它为什么被选中"。**
 
+本系统使用v5多因子策略：
+- 70%动量(12-1月) + 15%质量(低波动) + 15%价值(相对SMA200)
+- 截面排名选Top-15，月频再平衡
+- 逆波动率加权 + 行业25%上限
+- VIX崩盘保护 + ML择时
+
 要求：
 1. Telegram Markdown格式（*粗体*、`代码`、_斜体_）
 2. 手机端友好（每行≤35字符，无长横线）
@@ -283,30 +348,22 @@ REPORT_PROMPT = """你是一个量化交易系统的日报生成器。基于下�
 
 📊 *系统概况* （一行：日期+状态+耗时）
 
-🔻 *决策漏斗*
-用一句话概括筛选过程：
-"{universe}只股票→{signals}个信号→{conflicts}只双模型冲突抵消→{oracle_vetoed}只被Kronos否决→{zero_weight}只仓位过小→最终{final}只入选"
+🔻 *选股漏斗*
+概括筛选过程：宇宙{universe}只→因子排名→Top-15→行业cap→最终{final}只
 
 📋 *操作指令及选股理由*
-这是报告最核心的部分。对每笔订单：
+对每笔订单：
 - 写出精确指令：方向+代码+价格+股数
-- 用1-2句话解释选中原因，需包含：
-  · 双模型是否一致看好/看空
-  · 置信度和波动率特征
-  · Kronos专家的态度和预测
-  · 为什么它能通过仓位筛选（如低波动率等）
-- 每笔指令之间空行分隔
+- 用1-2句话解释：动量强度、波动率特征、行业
 
-如果没有操作，写"今日无操作——所有候选均未通过筛选"并简要说明原因。
+💼 *持仓明细*
+列出现有持仓。格式：`代码` 数量股 (成本价)
 
-💼 *组合状态* 净值+累计回报+回撤+现金（紧凑一行）
+💰 *组合状态* 净值+累计回报+回撤+现金
 
-签名：_Quant MVP v6.0 | SMA+Momentum+Kronos_
+签名：_Quant MVP v5 | 多因子月频+VIX保护_
 
-注意：
-- 不要罗列被淘汰的股票列表！只在漏斗概述中给出被淘汰的数量即可
-- 重点是讲故事：为什么最终选中的这几只能突围
-- 总字符数<3500
+注意：总字符数<3500
 
 JSON数据：
 ```json
@@ -353,7 +410,7 @@ def generate_llm_report(env, report_data):
 
 def build_fallback_report(data):
     L = []
-    L.append(f"📊 *Quant MVP v6.0 日报*")
+    L.append(f"📊 *Quant MVP v5 日报*")
     L.append(f"📅 `{data['date']}` {'✅' if data['status']=='success' else '❌'} `{data['elapsed_seconds']}s`")
 
     if data['status'] != 'success':
@@ -382,10 +439,17 @@ def build_fallback_report(data):
         L.append("⚪ 今日无操作")
 
     pf = data.get('portfolio')
-    if pf:
-        L.append(f"\n💼 `${pf['nav']:,.0f}` `{pf['cum_return']:+.2f}%` 回撤`{pf['max_dd']:.1f}%` 现金`${pf['cash']:,.0f}`")
+    L.append(f"\n💼 *持仓明细*")
+    if pf and pf.get('positions_detail'):
+        for sym, detail in pf['positions_detail'].items():
+            L.append(f"`{sym}` {detail.get('qty', 0)}股 (成本 ${detail.get('avg_cost', 0):.2f})")
+    else:
+        L.append("当前空仓")
 
-    L.append(f"\n_Quant MVP v6.0 | SMA+Momentum+Kronos_")
+    if pf:
+        L.append(f"\n💰 `${pf['nav']:,.0f}` `{pf['cum_return']:+.2f}%` 回撤`{pf['max_dd']:.1f}%` 现金`${pf['cash']:,.0f}`")
+
+    L.append(f"\n_Quant MVP v5 | 多因子月频+VIX保护_")
     return '\n'.join(L)
 
 

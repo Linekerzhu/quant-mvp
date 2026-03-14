@@ -1,0 +1,9 @@
+{
+  "ingest": {
+    "rows": 89186,
+    "symbols": 516
+  },
+  "validate": {
+    "passed": false
+  }
+}

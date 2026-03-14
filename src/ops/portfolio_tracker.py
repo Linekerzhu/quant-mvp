@@ -116,7 +116,7 @@ class PortfolioTracker:
             if sym not in prices or prices[sym] <= 0:
                 continue
             target_usd = abs(weight) * nav_before
-            target_qty = int(target_usd / prices[sym])
+            target_qty = round(target_usd / prices[sym])  # L1 fix: round() not int()
             if weight < 0:
                 target_qty = -target_qty
             target_positions[sym] = target_qty
@@ -174,7 +174,7 @@ class PortfolioTracker:
                 cost = trade_value + friction_cost
                 if cost > state['cash']:
                     # Reduce qty to fit available cash
-                    max_affordable = int((state['cash'] / (price * (1 + self.friction))))
+                    max_affordable = round((state['cash'] / (price * (1 + self.friction))))  # L1 fix
                     delta = max_affordable
                     if delta <= 0:
                         continue

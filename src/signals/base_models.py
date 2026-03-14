@@ -190,3 +190,49 @@ class BaseModelMomentum(BaseSignalGenerator):
     
     def __repr__(self):
         return f"BaseModelMomentum(window={self.window})"
+
+
+@SignalModelRegistry.register('mean_reversion')
+class BaseModelMeanReversion(BaseSignalGenerator):
+    """
+    Bollinger Band Mean Reversion Signal
+    
+    Generates signals based on Bollinger Bands:
+    - +1: price < lower band (oversold mean reversion)
+    - -1: price > upper band (overbought mean reversion)
+    -  0: price within bands or insufficient data
+    """
+    def __init__(self, window: int = 60, num_std: float = 2.5):
+        self.window = window
+        self.num_std = num_std
+
+    def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
+        if df is None or df.empty:
+            raise ValueError("Input DataFrame is empty or None")
+        if 'adj_close' not in df.columns:
+            raise ValueError("Missing required column: adj_close")
+
+        result = df.copy()
+        
+        # Calculate Bollinger Bands
+        rolling = result['adj_close'].rolling(self.window)
+        sma = rolling.mean()
+        std = rolling.std()
+        
+        upper_band = sma + (std * self.num_std)
+        lower_band = sma - (std * self.num_std)
+        
+        # Generate signals
+        side = pd.Series(0, index=result.index)
+        side[result['adj_close'] < lower_band] = 1   # Oversold -> Buy
+        side[result['adj_close'] > upper_band] = -1  # Overbought -> Sell
+        
+        result['side'] = side.astype(int)
+        
+        # Cold start
+        result.iloc[:self.window, result.columns.get_loc('side')] = 0
+        
+        return result
+
+    def __repr__(self):
+        return f"BaseModelMeanReversion(window={self.window}, num_std={self.num_std})"

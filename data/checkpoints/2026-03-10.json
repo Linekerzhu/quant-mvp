@@ -1,0 +1,40 @@
+{
+  "ingest": {
+    "rows": 89875,
+    "symbols": 517
+  },
+  "validate": {
+    "passed": false
+  },
+  "integrity": {
+    "drifts": 8637
+  },
+  "corporate_actions": {
+    "splits_detected": "0",
+    "delistings_detected": 0,
+    "suspensions_detected": "0",
+    "delistings": {}
+  },
+  "universe": {
+    "base_tickers": 517,
+    "with_data": 517,
+    "liquid": 517,
+    "sufficient_history": 517,
+    "survivorship_bias_method": "current_components_with_disclosure"
+  },
+  "features": {
+    "rows": 89875
+  },
+  "signals": {
+    "active_signals": 0
+  },
+  "risk_and_size": "No signals",
+  "execute": {
+    "status": "no_targets",
+    "orders": 0,
+    "value_usd": 0
+  },
+  "virtual_portfolio": {
+    "status": "no_targets"
+  }
+}

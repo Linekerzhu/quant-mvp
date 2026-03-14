@@ -455,6 +455,84 @@ def build_fallback_report(data):
 
 # ── Main ────────────────────────────────────────────────
 
+def is_rebalance_day(trade_date: str) -> bool:
+    """Check if today is a rebalance day (first trading day of the month)."""
+    # Check if signals file was generated with actual trades
+    targets_path = os.path.join(PROJECT_ROOT, f'data/processed/targets_{trade_date}.parquet')
+    signals_path = os.path.join(PROJECT_ROOT, f'data/processed/signals_{trade_date}.parquet')
+    
+    if os.path.exists(targets_path):
+        try:
+            df = pd.read_parquet(targets_path)
+            if len(df) > 0 and 'target_weight' in df.columns:
+                return True
+        except:
+            pass
+    
+    # Fallback: check date — is it the first trading day of this month?
+    from datetime import datetime as dt
+    d = dt.strptime(trade_date, '%Y-%m-%d')
+    if d.day <= 3:  # First 3 calendar days likely = first trading day
+        return True
+    
+    return False
+
+
+def build_brief_report(trade_date: str) -> str:
+    """One-line daily brief for non-rebalance days."""
+    pf = read_portfolio_summary()
+    
+    # Try to get VIX
+    vix_str = ""
+    try:
+        import yfinance as yf
+        vix = yf.download("^VIX", period="1d", progress=False, auto_adjust=False)
+        if len(vix) > 0:
+            vix_val = float(vix.droplevel('Ticker', axis=1)['Close'].iloc[-1])
+            if vix_val > 40:
+                vix_str = f"🔴VIX={vix_val:.0f}"
+            elif vix_val > 25:
+                vix_str = f"🟡VIX={vix_val:.0f}"
+            else:
+                vix_str = f"VIX={vix_val:.0f}"
+    except:
+        pass
+    
+    # Kronos verdicts if any
+    kronos_str = ""
+    verdicts_path = os.path.join(PROJECT_ROOT, f'data/processed/kronos_verdicts_{trade_date}.json')
+    if os.path.exists(verdicts_path):
+        try:
+            with open(verdicts_path) as f:
+                verdicts = json.load(f)
+            vetoed = [s for s, v in verdicts.items() if v.get('action') == 'veto']
+            if vetoed:
+                kronos_str = f" Kronos否决{len(vetoed)}只"
+        except:
+            pass
+    
+    if pf:
+        # Daily change
+        hist = pf.get('positions', 0)
+        nav = pf['nav']
+        change = pf['cum_return']
+        dd = pf['max_dd']
+        cash_pct = pf['cash'] / nav * 100 if nav > 0 else 0
+        
+        lines = [
+            f"📈 `{trade_date}` NAV `${nav:,.0f}` `{change:+.1f}%`",
+            f"持仓{pf['positions']}只 回撤{dd:.1f}% 现金{cash_pct:.0f}% {vix_str}{kronos_str}",
+            f"_v5 多因子 | 下次再平衡: 下月初_",
+        ]
+    else:
+        lines = [
+            f"📈 `{trade_date}` 系统运行正常 ✅ {vix_str}",
+            f"_v5 多因子 | 待首次再平衡_",
+        ]
+    
+    return '\n'.join(lines)
+
+
 def main():
     env = load_env()
     start_time = datetime.now()
@@ -467,14 +545,28 @@ def main():
     )
 
     elapsed = (datetime.now() - start_time).total_seconds()
-    report_data = collect_report_data(trade_date, elapsed, result.returncode, result.stderr)
 
-    report = generate_llm_report(env, report_data)
-    if not report:
+    # Dual-mode reporting: full report on rebalance days, brief on regular days
+    rebalance = is_rebalance_day(trade_date)
+    
+    if result.returncode != 0:
+        # Error report — always send full details
+        report_data = collect_report_data(trade_date, elapsed, result.returncode, result.stderr)
         report = build_fallback_report(report_data)
-        print("[REPORT] Using fallback template")
+        print("[REPORT] Error report")
+    elif rebalance:
+        # 📋 Rebalance day — full LLM decision report
+        report_data = collect_report_data(trade_date, elapsed, result.returncode, result.stderr)
+        report = generate_llm_report(env, report_data)
+        if not report:
+            report = build_fallback_report(report_data)
+            print("[REPORT] Rebalance day: fallback template")
+        else:
+            print("[REPORT] Rebalance day: DeepSeek LLM report")
     else:
-        print("[REPORT] Using DeepSeek LLM report")
+        # 📈 Regular day — one-line brief
+        report = build_brief_report(trade_date)
+        print("[REPORT] Regular day: brief")
 
     send_telegram(env, report)
     print(report)

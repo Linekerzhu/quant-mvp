@@ -1,16 +1,20 @@
 """
-Fundamental Factor Provider — v5 基本面因子
+Fundamental + Sentiment Factor Provider — v5.1
 
-Downloads and caches fundamental data from yfinance for S&P500 constituents.
-Designed for monthly rebalancing: data is refreshed monthly since fundamentals
-don't change daily.
+Downloads and caches fundamental data + analyst sentiment from yfinance.
+Designed for monthly rebalancing.
 
-Factors:
-  1. Earnings Yield = 1/PE  (cheapness — higher is better)
-  2. ROE = Return on Equity  (profitability — higher is better)
-  3. FCF Yield ≈ 1/(PS * Profit Margin^{-1})  (cash generation proxy)
-  4. Earnings Growth  (growth — higher is better)
-  5. Low Debt = -Debt/Equity  (financial health — lower debt is better)
+Fundamental Factors:
+  1. Earnings Yield = 1/PE  (cheapness)
+  2. ROE = Return on Equity  (profitability)
+  3. Profit Margin  (quality)
+  4. Earnings Growth  (growth)
+  5. Low Debt = -Debt/Equity  (safety)
+
+Market Sentiment Factors:
+  6. Analyst Upside = target price / current - 1  (Street consensus)
+  7. Analyst Consensus = 5 - recommendation score  (conviction, higher=more bullish)
+  8. Earnings Surprise = quarterly earnings growth  (beat/miss momentum)
 
 Usage:
     from src.features.fundamentals import FundamentalProvider
@@ -38,12 +42,17 @@ class FundamentalProvider:
     CACHE_TTL_DAYS = 7  # Refresh fundamentals weekly
     
     FACTOR_COLS = [
-        "earnings_yield",   # 1/PE — cheapness
-        "roe",              # Return on equity — profitability
-        "profit_margin",    # Net margin — quality
-        "earnings_growth",  # YoY earnings growth
-        "revenue_growth",   # YoY revenue growth
-        "low_debt",         # -Debt/Equity — financial health
+        # Fundamental quality
+        "earnings_yield",     # 1/PE — cheapness
+        "roe",                # Return on equity — profitability
+        "profit_margin",      # Net margin — quality
+        "earnings_growth",    # YoY earnings growth
+        "revenue_growth",     # YoY revenue growth
+        "low_debt",           # -Debt/Equity — financial health
+        # Market sentiment
+        "analyst_upside",     # Target price upside %
+        "analyst_consensus",  # 4=strong buy, 0=sell
+        "earnings_surprise",  # Recent quarter earnings growth
     ]
     
     def __init__(self, cache_dir: Optional[str] = None):
@@ -101,7 +110,7 @@ class FundamentalProvider:
                 t = yf.Ticker(sym)
                 info = t.info
                 
-                # Extract raw metrics
+                # --- Fundamental metrics ---
                 pe = info.get("trailingPE")
                 fwd_pe = info.get("forwardPE")
                 roe = info.get("returnOnEquity")
@@ -110,39 +119,53 @@ class FundamentalProvider:
                 earnings_growth = info.get("earningsGrowth")
                 revenue_growth = info.get("revenueGrowth")
                 
-                # Compute derived factors
-                # Earnings Yield: use forward PE if available, else trailing
+                # Derived: Earnings Yield
                 best_pe = fwd_pe if fwd_pe and fwd_pe > 0 else pe
                 earnings_yield = 1.0 / best_pe if best_pe and best_pe > 0 else None
                 
-                # Low Debt: negate so higher = healthier
+                # Derived: Low Debt (negate so higher = healthier)
                 low_debt = -(debt_equity / 100.0) if debt_equity is not None else None
+                
+                # --- Market sentiment metrics ---
+                # Analyst target price upside
+                target_price = info.get("targetMeanPrice")
+                current_price = info.get("currentPrice") or info.get("regularMarketPrice")
+                analyst_upside = None
+                if target_price and current_price and current_price > 0:
+                    analyst_upside = (target_price / current_price) - 1.0
+                
+                # Analyst consensus (1=StrongBuy → 5=Sell, invert to higher=better)
+                rec_mean = info.get("recommendationMean")
+                analyst_consensus = (5.0 - rec_mean) if rec_mean else None
+                
+                # Earnings surprise (latest quarter YoY growth)
+                earnings_surprise = info.get("earningsQuarterlyGrowth")
                 
                 results.append({
                     "symbol": sym,
+                    # Fundamental
                     "earnings_yield": earnings_yield,
                     "roe": roe,
                     "profit_margin": profit_margin,
                     "earnings_growth": earnings_growth,
                     "revenue_growth": revenue_growth,
                     "low_debt": low_debt,
-                    # Raw data for reference
+                    # Sentiment
+                    "analyst_upside": analyst_upside,
+                    "analyst_consensus": analyst_consensus,
+                    "earnings_surprise": earnings_surprise,
+                    # Raw reference
                     "_pe": pe,
                     "_fwd_pe": fwd_pe,
                     "_debt_equity": debt_equity,
+                    "_rec_mean": rec_mean,
+                    "_target_price": target_price,
+                    "_n_analysts": info.get("numberOfAnalystOpinions"),
                 })
                 
             except Exception as e:
                 failed.append(sym)
-                results.append({
-                    "symbol": sym,
-                    "earnings_yield": None,
-                    "roe": None,
-                    "profit_margin": None,
-                    "earnings_growth": None,
-                    "revenue_growth": None,
-                    "low_debt": None,
-                })
+                results.append({"symbol": sym})
         
         df = pd.DataFrame(results)
         
@@ -162,22 +185,30 @@ class FundamentalProvider:
         weights: dict = None,
     ) -> pd.Series:
         """
-        Compute cross-sectional composite fundamental score.
+        Compute cross-sectional composite fundamental + sentiment score.
         
-        Default weights (balanced fundamental quality):
-          30% Earnings Yield (cheapness)
-          25% ROE (profitability)
-          20% Profit Margin (quality)
-          15% Earnings Growth (growth)
-          10% Low Debt (safety)
+        Default weights (quality + market heat balanced):
+          20% Earnings Yield  (cheapness)
+          15% ROE  (profitability)
+          10% Profit Margin  (quality)
+          10% Earnings Growth  (growth)
+           5% Low Debt  (safety)
+          20% Analyst Upside  (Street conviction — what's being chased)
+          10% Analyst Consensus  (buy/sell rating)
+          10% Earnings Surprise  (beat/miss momentum)
         """
         if weights is None:
             weights = {
-                "earnings_yield": 0.30,
-                "roe": 0.25,
-                "profit_margin": 0.20,
-                "earnings_growth": 0.15,
-                "low_debt": 0.10,
+                # Fundamental quality (60%)
+                "earnings_yield": 0.20,
+                "roe": 0.15,
+                "profit_margin": 0.10,
+                "earnings_growth": 0.10,
+                "low_debt": 0.05,
+                # Market sentiment (40%)
+                "analyst_upside": 0.20,
+                "analyst_consensus": 0.10,
+                "earnings_surprise": 0.10,
             }
         
         composite = pd.Series(0.0, index=df.index)

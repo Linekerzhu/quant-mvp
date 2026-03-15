@@ -18,3 +18,32 @@
 {"date": "2026-03-13", "symbol": "VTR", "action": "BUY", "qty": 16, "price": 86.19999694824219, "friction": 2.75839990234375}
 {"date": "2026-03-13", "symbol": "WEC", "action": "BUY", "qty": 17, "price": 115.05000305175781, "friction": 3.911700103759766}
 {"date": "2026-03-13", "symbol": "XEL", "action": "BUY", "qty": 16, "price": 80.81999969482422, "friction": 2.586239990234375}
+{"date": "2026-03-15", "symbol": "CMS", "action": "CLOSE", "qty": -22, "price": 77.83000183105469, "friction": 3.424520080566406, "realized_pnl": 16.29722711181633}
+{"date": "2026-03-15", "symbol": "HOLX", "action": "CLOSE", "qty": -132, "price": 75.12000274658203, "friction": 19.831680725097655, "realized_pnl": -51.5666370849613}
+{"date": "2026-03-15", "symbol": "LIN", "action": "CLOSE", "qty": -2, "price": 493.9200134277344, "friction": 1.9756800537109376, "realized_pnl": 3.0826994628906386}
+{"date": "2026-03-15", "symbol": "MCD", "action": "CLOSE", "qty": -4, "price": 326.4599914550781, "friction": 2.611679931640625, "realized_pnl": 4.9969912109374075}
+{"date": "2026-03-15", "symbol": "MO", "action": "CLOSE", "qty": -16, "price": 67.88999938964844, "friction": 2.1724799804687502, "realized_pnl": -1.619549316406363}
+{"date": "2026-03-15", "symbol": "PPL", "action": "CLOSE", "qty": -29, "price": 38.5099983215332, "friction": 2.233579902648926, "realized_pnl": 8.318320289611819}
+{"date": "2026-03-15", "symbol": "REG", "action": "CLOSE", "qty": -20, "price": 76.58000183105469, "friction": 3.0632000732421876, "realized_pnl": -5.525224609374918}
+{"date": "2026-03-15", "symbol": "SO", "action": "CLOSE", "qty": -11, "price": 98.01000213623047, "friction": 2.1562200469970705, "realized_pnl": -2.4386361846923066}
+{"date": "2026-03-15", "symbol": "SRE", "action": "CLOSE", "qty": -11, "price": 95.11000061035156, "friction": 2.092420013427734, "realized_pnl": 16.977379791259857}
+{"date": "2026-03-15", "symbol": "TJX", "action": "CLOSE", "qty": -9, "price": 155.42999267578125, "friction": 2.7977398681640624, "realized_pnl": -8.841965240478547}
+{"date": "2026-03-15", "symbol": "TRV", "action": "CLOSE", "qty": -3, "price": 302.489990234375, "friction": 1.8149399414062501, "realized_pnl": -2.1870585937499656}
+{"date": "2026-03-15", "symbol": "VTR", "action": "CLOSE", "qty": -16, "price": 86.55999755859375, "friction": 2.769919921875, "realized_pnl": 0.23168994140614618}
+{"date": "2026-03-15", "symbol": "WEC", "action": "CLOSE", "qty": -17, "price": 117.3499984741211, "friction": 3.9898999481201174, "realized_pnl": 31.19832212829585}
+{"date": "2026-03-15", "symbol": "XEL", "action": "CLOSE", "qty": -16, "price": 81.91000366210938, "friction": 2.6211201171875, "realized_pnl": 12.23270336914061}
+{"date": "2026-03-15", "symbol": "ACGL", "action": "BUY", "qty": 104, "price": 93.47000122070312, "friction": 19.44176025390625}
+{"date": "2026-03-15", "symbol": "ABBV", "action": "BUY", "qty": 27, "price": 219.67999267578125, "friction": 11.862719604492188}
+{"date": "2026-03-15", "symbol": "GL", "action": "BUY", "qty": 67, "price": 138.4600067138672, "friction": 18.553640899658202}
+{"date": "2026-03-15", "symbol": "V", "action": "BUY", "qty": 19, "price": 307.1400146484375, "friction": 11.671320556640625}
+{"date": "2026-03-15", "symbol": "ABT", "action": "BUY", "qty": 58, "price": 108.02999877929688, "friction": 12.531479858398438}
+{"date": "2026-03-15", "symbol": "GOOGL", "action": "BUY", "qty": 19, "price": 302.2799987792969, "friction": 11.486639953613281}
+{"date": "2026-03-15", "symbol": "KDP", "action": "BUY", "qty": 179, "price": 27.40999984741211, "friction": 9.812779945373535}
+{"date": "2026-03-15", "symbol": "PM", "action": "BUY", "qty": 24, "price": 174.66000366210938, "friction": 8.383680175781251}
+{"date": "2026-03-15", "symbol": "MTD", "action": "BUY", "qty": 4, "price": 1173.739990234375, "friction": 9.389919921875}
+{"date": "2026-03-15", "symbol": "GOOG", "action": "BUY", "qty": 20, "price": 301.4599914550781, "friction": 12.058399658203125}
+{"date": "2026-03-15", "symbol": "PDD", "action": "BUY", "qty": 60, "price": 102.6500015258789, "friction": 12.318000183105468}
+{"date": "2026-03-15", "symbol": "SOLV", "action": "BUY", "qty": 76, "price": 66.76000213623047, "friction": 10.147520324707031}
+{"date": "2026-03-15", "symbol": "VICI", "action": "BUY", "qty": 274, "price": 28.420000076293945, "friction": 15.574160041809082}
+{"date": "2026-03-15", "symbol": "AZO", "action": "BUY", "qty": 1, "price": 3562.85009765625, "friction": 7.1257001953125005}
+{"date": "2026-03-15", "symbol": "SBAC", "action": "BUY", "qty": 25, "price": 188.0399932861328, "friction": 9.401999664306642}

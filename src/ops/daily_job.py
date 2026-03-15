@@ -431,7 +431,7 @@ class DailyJob:
             
             if analyst.api_key:
                 # Send top-30 for analysis (more than we need, to catch replacements)
-                top_candidates = pre_ranked.head(30).copy()
+                top_candidates = pre_ranked.head(15).copy()
                 
                 # Build macro context from macro_risk if available
                 macro_context = ""

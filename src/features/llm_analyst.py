@@ -162,7 +162,7 @@ class LLMAnalyst:
                     "temperature": 0.2,
                     "max_tokens": 2000,
                 },
-                timeout=30,
+                timeout=90,  # 15 stocks × ~2000 tokens ≈ 40-60s on DeepSeek
             )
             resp.raise_for_status()
             

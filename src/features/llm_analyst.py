@@ -225,11 +225,11 @@ class LLMAnalyst:
                 # Apply sentiment adjustment
                 adjustment = 1.0 + (sentiment * weight)
                 
-                # Danger flag: additional penalty
+                # Danger flag: additional penalty (conservative — LLM may hallucinate)
                 if flag == "danger":
-                    adjustment *= 0.80
+                    adjustment *= 0.90  # -10% (not -20%, to limit hallucination damage)
                 elif flag == "caution":
-                    adjustment *= 0.90
+                    adjustment *= 0.95  # -5%
                 
                 if "composite_score" in df.columns:
                     df.at[idx, "composite_score"] *= adjustment

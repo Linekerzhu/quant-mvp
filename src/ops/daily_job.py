@@ -383,11 +383,11 @@ class DailyJob:
             fund_composite = fp.compute_composite(fund_df)
             fund_df["fundamental_score"] = fund_composite
             
-            # Merge into today
-            today = today.merge(
-                fund_df[["symbol", "fundamental_score", "earnings_yield", "roe", "profit_margin", "earnings_growth"]],
-                on="symbol", how="left"
-            )
+            # Merge into today (handle potential column name conflicts)
+            merge_cols = ["symbol", "fundamental_score", "analyst_upside", "analyst_consensus", "earnings_surprise"]
+            # Avoid merging earnings_growth since fundamental_score already includes it
+            fund_merge = fund_df[[c for c in merge_cols if c in fund_df.columns]].copy()
+            today = today.merge(fund_merge, on="symbol", how="left")
             today["fundamental_rank"] = today["fundamental_score"].rank(pct=True, na_option="bottom")
             has_fundamentals = True
             
@@ -403,15 +403,15 @@ class DailyJob:
             has_fundamentals = False
 
         # Composite score: Technical + Fundamental
-        # 40% Momentum + 25% Fundamental + 20% Low Volatility + 15% reserved for growth
+        # 45% Momentum + 35% Fundamental (incl. growth, sentiment) + 20% Low Volatility
+        # NOTE: earnings_growth is INSIDE fundamental_rank, not separate, to avoid double-counting
         if has_fundamentals:
             today["composite_score"] = (
-                0.40 * today["mom_12_1_rank"] +
-                0.25 * today["fundamental_rank"] +
-                0.20 * today["low_vol_rank"] +
-                0.15 * today.get("earnings_growth", pd.Series(0.5, index=today.index)).rank(pct=True, na_option="bottom")
+                0.45 * today["mom_12_1_rank"] +
+                0.35 * today["fundamental_rank"] +
+                0.20 * today["low_vol_rank"]
             )
-            factor_desc = "40%Mom + 25%Fundamental + 20%LowVol + 15%Growth"
+            factor_desc = "45%Mom + 35%Fundamental + 20%LowVol"
         else:
             # Fallback to price-only if fundamentals unavailable
             today["composite_score"] = (
@@ -594,10 +594,9 @@ class DailyJob:
 
         # Save Kronos verdicts for analysis/reporting
         if kronos_verdicts:
-            import json as _json3
             verdicts_path = f"data/processed/kronos_verdicts_{trade_date}.json"
             with open(verdicts_path, "w") as vf:
-                _json3.dump({
+                _json.dump({
                     sym: {"action": v.get("action"), "pred_return": v.get("predicted_return", 0), 
                           "reason": v.get("reason", "")}
                     for sym, v in kronos_verdicts.items()
@@ -635,15 +634,39 @@ class DailyJob:
                     "factor": macro_exposure,
                     "reason": f"macro_score={macro_score:.0f}/100",
                 })
+            
+            # VIX Crash Protection Override (hard cap, on top of macro)
+            # If VIX is extreme, apply stricter cap regardless of macro composite
+            vix_level = macro_details.get("vix", {}).get("level", 0)
+            vix_cap = 1.0
+            if vix_level > 70:
+                vix_cap = 0.0   # Full exit
+            elif vix_level > 55:
+                vix_cap = 0.25
+            elif vix_level > 40:
+                vix_cap = 0.50
+            
+            if vix_cap < macro_exposure:
+                # VIX override is stricter — apply additional reduction
+                additional_cut = vix_cap / macro_exposure if macro_exposure > 0 else 0
+                selected_df["target_weight"] *= additional_cut
+                logger.info("vix_crash_override", {
+                    "vix": vix_level,
+                    "vix_cap": vix_cap,
+                    "macro_exposure": macro_exposure,
+                    "effective_exposure": vix_cap,
+                })
+                
         except Exception as e:
             logger.warn("macro_risk_failed", {"error": str(e)})
 
         # Save macro assessment for reporting
         if macro_details:
-            import json as _json4
             macro_path = f"data/processed/macro_risk_{trade_date}.json"
             with open(macro_path, "w") as mf:
-                _json4.dump({"score": macro_score, "exposure": macro_exposure, "details": {
+                _json.dump({"score": macro_score, "exposure": macro_exposure, 
+                           "vix_override": vix_cap if 'vix_cap' in dir() else 1.0,
+                           "details": {
                     k: {kk: (round(vv, 3) if isinstance(vv, float) else vv) for kk, vv in v.items()}
                     for k, v in macro_details.items()
                 }}, mf, indent=2)

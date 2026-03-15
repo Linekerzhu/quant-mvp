@@ -91,21 +91,17 @@ class FundamentalProvider:
         return self._download_fundamentals(symbols, cache_path)
     
     def _download_fundamentals(self, symbols: List[str], cache_path: str) -> pd.DataFrame:
-        """Download fundamental data from yfinance in batches."""
+        """Download fundamental data from yfinance using concurrent threads."""
         try:
             import yfinance as yf
         except ImportError:
             print("[FUND] yfinance not installed, returning empty")
             return pd.DataFrame(columns=["symbol"] + self.FACTOR_COLS)
         
-        results = []
-        failed = []
+        from concurrent.futures import ThreadPoolExecutor, as_completed
         
-        for i, sym in enumerate(symbols):
-            if i > 0 and i % 50 == 0:
-                print(f"[FUND]   Progress: {i}/{len(symbols)}")
-                time.sleep(0.5)  # Rate limiting
-            
+        def _fetch_one(sym: str) -> dict:
+            """Fetch fundamental data for a single symbol."""
             try:
                 t = yf.Ticker(sym)
                 info = t.info
@@ -119,53 +115,55 @@ class FundamentalProvider:
                 earnings_growth = info.get("earningsGrowth")
                 revenue_growth = info.get("revenueGrowth")
                 
-                # Derived: Earnings Yield
                 best_pe = fwd_pe if fwd_pe and fwd_pe > 0 else pe
                 earnings_yield = 1.0 / best_pe if best_pe and best_pe > 0 else None
-                
-                # Derived: Low Debt (negate so higher = healthier)
                 low_debt = -(debt_equity / 100.0) if debt_equity is not None else None
                 
                 # --- Market sentiment metrics ---
-                # Analyst target price upside
                 target_price = info.get("targetMeanPrice")
                 current_price = info.get("currentPrice") or info.get("regularMarketPrice")
                 analyst_upside = None
                 if target_price and current_price and current_price > 0:
                     analyst_upside = (target_price / current_price) - 1.0
                 
-                # Analyst consensus (1=StrongBuy → 5=Sell, invert to higher=better)
                 rec_mean = info.get("recommendationMean")
                 analyst_consensus = (5.0 - rec_mean) if rec_mean else None
-                
-                # Earnings surprise (latest quarter YoY growth)
                 earnings_surprise = info.get("earningsQuarterlyGrowth")
                 
-                results.append({
+                return {
                     "symbol": sym,
-                    # Fundamental
                     "earnings_yield": earnings_yield,
                     "roe": roe,
                     "profit_margin": profit_margin,
                     "earnings_growth": earnings_growth,
                     "revenue_growth": revenue_growth,
                     "low_debt": low_debt,
-                    # Sentiment
                     "analyst_upside": analyst_upside,
                     "analyst_consensus": analyst_consensus,
                     "earnings_surprise": earnings_surprise,
-                    # Raw reference
-                    "_pe": pe,
-                    "_fwd_pe": fwd_pe,
-                    "_debt_equity": debt_equity,
-                    "_rec_mean": rec_mean,
-                    "_target_price": target_price,
+                    "_pe": pe, "_fwd_pe": fwd_pe, "_debt_equity": debt_equity,
+                    "_rec_mean": rec_mean, "_target_price": target_price,
                     "_n_analysts": info.get("numberOfAnalystOpinions"),
-                })
-                
-            except Exception as e:
-                failed.append(sym)
-                results.append({"symbol": sym})
+                }
+            except Exception:
+                return {"symbol": sym}
+        
+        results = []
+        failed = []
+        
+        # Use ThreadPoolExecutor for concurrent downloads (I/O-bound)
+        max_workers = min(10, len(symbols))
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {executor.submit(_fetch_one, sym): sym for sym in symbols}
+            done_count = 0
+            for future in as_completed(futures):
+                done_count += 1
+                if done_count % 50 == 0:
+                    print(f"[FUND]   Progress: {done_count}/{len(symbols)}")
+                result = future.result()
+                if len(result) <= 1:  # Only has 'symbol' key
+                    failed.append(futures[future])
+                results.append(result)
         
         df = pd.DataFrame(results)
         

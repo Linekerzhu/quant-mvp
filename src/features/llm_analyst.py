@@ -105,18 +105,30 @@ class LLMAnalyst:
         date = date or datetime.now().strftime("%Y-%m-%d")
         
         # Build stocks table for prompt
+        def _safe(val, default=0):
+            """Convert NaN/None to default. Python's `or` doesn't catch NaN."""
+            if val is None:
+                return default
+            try:
+                import math
+                if math.isnan(val):
+                    return default
+            except (TypeError, ValueError):
+                pass
+            return val
+        
         table_lines = []
         for _, r in candidates.iterrows():
             sym = r.get("symbol", "?")
-            ey = r.get("earnings_yield", 0) or 0
-            roe = r.get("roe", 0) or 0
-            margin = r.get("profit_margin", 0) or 0
-            upside = r.get("analyst_upside", 0) or 0
-            consensus = r.get("analyst_consensus", 0) or 0
-            eg = r.get("earnings_growth", 0) or 0
-            es = r.get("earnings_surprise", 0) or 0
-            mom = r.get("mom_12_1", 0) or 0
-            score = r.get("composite_score", 0) or 0
+            ey = _safe(r.get("earnings_yield"), 0)
+            roe = _safe(r.get("roe"), 0)
+            margin = _safe(r.get("profit_margin"), 0)
+            upside = _safe(r.get("analyst_upside"), 0)
+            consensus = _safe(r.get("analyst_consensus"), 0)
+            eg = _safe(r.get("earnings_growth"), 0)
+            es = _safe(r.get("earnings_surprise"), 0)
+            mom = _safe(r.get("mom_12_1"), 0)
+            score = _safe(r.get("composite_score"), 0)
             
             rating_map = {4: "强买", 3: "买入", 2: "持有", 1: "卖出"}
             rating = rating_map.get(round(consensus), f"{consensus:.1f}")

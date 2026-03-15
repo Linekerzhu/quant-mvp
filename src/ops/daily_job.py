@@ -402,38 +402,39 @@ class DailyJob:
             today["fundamental_rank"] = 0.5  # Neutral if unavailable
             has_fundamentals = False
 
-        # Composite score: Technical + Fundamental
-        # 45% Momentum + 35% Fundamental (incl. growth, sentiment) + 20% Low Volatility
-        # NOTE: earnings_growth is INSIDE fundamental_rank, not separate, to avoid double-counting
+        # Composite score — 80/20 Pareto principle
+        # 80% weight to the 2 factors that actually drive returns:
+        #   - Momentum (trend is fact)
+        #   - Analyst consensus (Street's money follows their ratings)
+        # 20% weight to everything else (fundamental quality, low volatility)
         if has_fundamentals:
             today["composite_score"] = (
-                0.45 * today["mom_12_1_rank"] +
-                0.35 * today["fundamental_rank"] +
+                0.40 * today["mom_12_1_rank"] +         # ★ 主力: 趋势
+                0.40 * today["fundamental_rank"] +       # ★ 主力: 基本面+分析师+热度
+                0.10 * today["low_vol_rank"] +           # · 配角: 稳定性
+                0.10 * today.get("analyst_upside", pd.Series(0.5, index=today.index)).rank(pct=True, na_option="bottom")  # · 配角: 目标价空间
+            )
+            factor_desc = "80%[Mom+Fundamental] + 20%[LowVol+Upside]"
+        else:
+            today["composite_score"] = (
+                0.80 * today["mom_12_1_rank"] +
                 0.20 * today["low_vol_rank"]
             )
-            factor_desc = "45%Mom + 35%Fundamental + 20%LowVol"
-        else:
-            # Fallback to price-only if fundamentals unavailable
-            today["composite_score"] = (
-                0.70 * today["mom_12_1_rank"] +
-                0.30 * today["low_vol_rank"]
-            )
-            factor_desc = "70%Mom + 30%LowVol (no fundamentals)"
+            factor_desc = "80%Mom + 20%LowVol (no fundamentals)"
         
         logger.info("composite_factors", {"formula": factor_desc})
 
-        # --- LLM Qualitative Analysis (v5.1) ---
-        # Send top candidates to DeepSeek for qualitative risk/opportunity assessment
+        # --- LLM Qualitative Analysis (report-only, does NOT change scores) ---
+        # DeepSeek analyzes candidates for Telegram report narrative.
+        # 80/20 principle: factors decide, LLM explains.
         pre_ranked = today.dropna(subset=["composite_score"]).sort_values("composite_score", ascending=False)
         try:
             from src.features.llm_analyst import LLMAnalyst
             analyst = LLMAnalyst()
             
             if analyst.api_key:
-                # Send top-30 for analysis (more than we need, to catch replacements)
                 top_candidates = pre_ranked.head(15).copy()
                 
-                # Build macro context from macro_risk if available
                 macro_context = ""
                 macro_path = f"data/processed/macro_risk_{trade_date}.json"
                 if os.path.exists(macro_path):
@@ -442,17 +443,14 @@ class DailyJob:
                     macro_context = f"宏观风险评分 {macro_data.get('score', '?')}/100, 建议仓位 {macro_data.get('exposure', '?')}"
                 
                 llm_results = analyst.analyze_candidates(top_candidates, macro_context, trade_date)
+                # NOTE: llm_results saved to JSON for report, but does NOT adjust scores
                 
                 if llm_results:
-                    # Adjust composite scores based on LLM sentiment
-                    today = analyst.apply_sentiment(today, llm_results, weight=0.10)
-                    
                     n_danger = sum(1 for v in llm_results.values() if v.get("flag") == "danger")
-                    n_caution = sum(1 for v in llm_results.values() if v.get("flag") == "caution")
-                    logger.info("llm_analysis_applied", {
+                    logger.info("llm_analysis_saved", {
                         "stocks_analyzed": len(llm_results),
                         "danger_flags": n_danger,
-                        "caution_flags": n_caution,
+                        "role": "report_only",
                     })
         except Exception as e:
             logger.warn("llm_analyst_failed", {"error": str(e)})

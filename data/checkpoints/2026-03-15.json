@@ -7,7 +7,7 @@
     "passed": false
   },
   "integrity": {
-    "drifts": 7750
+    "drifts": 7652
   },
   "corporate_actions": {
     "splits_detected": "0",
@@ -34,17 +34,17 @@
   },
   "execute": {
     "status": "executed",
-    "orders": 29,
+    "orders": 13,
     "nav": 100128.01,
-    "cash": 9787.39,
+    "cash": 10366.88,
     "realized_pnl": 128.01
   },
   "virtual_portfolio": {
-    "trades": 29,
+    "trades": 0,
     "nav": 99649.66,
     "cumulative_pnl": -350.34,
     "cumulative_return": "-0.35%",
-    "friction_today": 233.31
+    "friction_today": 0
   },
   "automl_retrain": {
     "status": "disabled",
